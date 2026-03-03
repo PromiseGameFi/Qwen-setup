@@ -1,103 +1,138 @@
-# Qwen Local Chat UI
+# Qwen Local Chat UI + Agent Runtime
 
-A professional local chat interface for Qwen, inspired by ChatGPT/Claude workflows.
+Professional local chat app for Qwen with ChatGPT/Claude-style UX, local persistence, and advanced agentic modes.
 
-- No sign-in or auth flows
-- OpenAI-compatible local provider support (LM Studio / Ollama OpenAI mode / vLLM / custom)
-- Streaming assistant responses with markdown + syntax-highlighted code blocks
-- Persistent local chat history via IndexedDB
-- JSON export/import and local data reset controls
+## What’s Included
 
-## Stack
+- No sign-in, local-first browser SPA
+- OpenAI-compatible model provider support
+- Streaming chat, markdown/code rendering, copyable code blocks
+- IndexedDB chat persistence + JSON export/import
+- New local sidecar (`agent-runtime`) for:
+  - `Agent` mode (tool-using loop)
+  - `Deep Think` mode (multi-pass + verifier)
+  - `Deep Research` mode (web retrieval + strict citations)
+  - `Swarm` mode (3-5 specialist agents + adjudication)
+- Benchmark gate endpoints and settings dashboard
 
-- React + Vite + TypeScript
-- Tailwind CSS + custom theme tokens
-- Zustand state management
-- Dexie (IndexedDB)
-- Vitest + Testing Library + Playwright
+## Tech Stack
 
-## Quick Start
+- Frontend: React + Vite + TypeScript + Tailwind + Zustand + Dexie
+- Sidecar: Node.js + TypeScript + Fastify + SQLite (`better-sqlite3`)
+- Testing: Vitest + React Testing Library + Playwright
 
-```bash
-npm install
-npm run dev
-```
+## Installed Model in This Repo
 
-Then open the URL printed by Vite (default `http://localhost:5173`).
+- Base downloaded model: `models/Qwen3.5-9B`
+- Runtime model used by local server: `models/Qwen3.5-9B-mlx-4bit`
+- Symlink alias created by script: `Qwen3.5-9B -> models/Qwen3.5-9B-mlx-4bit`
 
-## Installed Model Version (This Repo)
+## Full Run Process (UI + Model + Agent Runtime)
 
-- Base downloaded model: `Qwen3.5-9B` at `models/Qwen3.5-9B`
-- Runtime model used by the local server: `Qwen3.5-9B-mlx-4bit` at `models/Qwen3.5-9B-mlx-4bit`
+Run these in separate terminals.
 
-## End-to-End Run Process (Downloaded Qwen3.5-9B)
-
-Use this flow when you want the downloaded local model to power the UI.
-
-1. Install frontend dependencies:
+1. Install dependencies
 
 ```bash
 npm install
-```
-
-2. Install MLX runtime (one-time):
-
-```bash
 python3 -m pip install mlx-lm
 ```
 
-3. Start the local model API in Terminal 1:
+2. Start local model server (OpenAI-compatible on `127.0.0.1:1234`)
 
 ```bash
 ./scripts/start_qwen_mlx_server.sh
 ```
 
-What this does:
-- Reuses `models/Qwen3.5-9B-mlx-4bit` if it already exists.
-- Otherwise tries to auto-download a converted runtime model (if distribution env vars are set).
-- Otherwise auto-downloads base model `Qwen/Qwen3.5-9B` and converts it to `models/Qwen3.5-9B-mlx-4bit`.
-- Starts an OpenAI-compatible server at `http://127.0.0.1:1234/v1`.
-- Serves with model name `Qwen3.5-9B`.
+3. Start sidecar runtime (API on `127.0.0.1:8787`)
 
-4. Start the UI in Terminal 2:
+```bash
+npm run dev:sidecar
+```
+
+4. Start UI
 
 ```bash
 npm run dev -- --host 127.0.0.1 --port 5173
 ```
 
-5. Open the app:
+5. Open app
+
 - `http://127.0.0.1:5173`
 
-6. Ensure Settings match:
-- Base URL: `http://127.0.0.1:1234/v1`
-- Model: `Qwen3.5-9B`
+6. Settings to verify
 
-7. Optional health checks:
+- Model Base URL: `http://127.0.0.1:1234/v1`
+- Model Name: `Qwen3.5-9B`
+- Sidecar Base URL: `http://127.0.0.1:8787`
 
-```bash
-curl http://127.0.0.1:1234/v1/models
-curl http://127.0.0.1:5173
-```
-
-8. Stop services:
-- Press `Ctrl+C` in each terminal.
-- Or kill by port:
+## Scripts
 
 ```bash
-kill $(lsof -tiTCP:1234 -sTCP:LISTEN)
-kill $(lsof -tiTCP:5173 -sTCP:LISTEN)
+npm run dev           # frontend
+npm run dev:ui        # frontend (same as dev)
+npm run dev:sidecar   # agent runtime sidecar
+npm run build         # typecheck + frontend build
+npm run typecheck     # TS project references (frontend + sidecar)
+npm run lint          # eslint
+npm run test          # vitest
+npm run test:e2e      # playwright
 ```
 
-## Distribution Mode (Auto-Download Converted Runtime Model)
+## Agent Runtime API
 
-If you are distributing this project to users, host the preconverted runtime model and let the startup script download it automatically.
+- `POST /api/runs`
+- `GET /api/runs/:runId/stream` (SSE)
+- `POST /api/runs/:runId/cancel`
+- `GET /api/runs/:runId`
+- `GET /api/health`
+- `POST /api/bench/run`
+- `GET /api/bench/latest`
 
-Supported download sources:
+Default sidecar base URL: `http://127.0.0.1:8787`
 
-- `MLX_MODEL_REPO`: Hugging Face model repo containing converted MLX files
-- `MLX_MODEL_URL`: direct `.tar.gz` / `.tgz` / `.tar` / `.zip` archive URL
+## Mode Behavior
 
-User one-command startup examples:
+- `Chat`: direct chat path to model endpoint
+- `Agent`: planning + tool trace + synthesis
+- `Deep Think`: multiple candidate answers + verifier selection
+- `Deep Research`: retrieval/extraction + citation-grounded synthesis
+- `Swarm`: parallel role agents (`Retriever`, `Analyst`, `Skeptic`, optional `FactChecker`, optional `Synthesizer`) + adjudication
+
+## Optional Research Provider Keys
+
+You can use Tavily/Brave keys (optional).
+
+- Enter keys in UI Settings (`Agent Runtime` section)
+- Keys are posted to sidecar and stored locally in:
+  - `agent-runtime/data/provider-keys.json`
+- Env vars still override file values:
+  - `TAVILY_API_KEY`
+  - `BRAVE_API_KEY`
+
+Without keys, the runtime uses degraded fallback search behavior.
+
+## Benchmark Gate
+
+In settings, use **Run Benchmark** to generate latest report.
+
+You can also trigger directly:
+
+```bash
+curl -X POST http://127.0.0.1:8787/api/bench/run
+curl http://127.0.0.1:8787/api/bench/latest
+```
+
+## Distribution Mode for Runtime Model Download
+
+`start_qwen_mlx_server.sh` supports distribution-friendly runtime model download.
+
+Supported:
+
+- `MLX_MODEL_REPO` (Hugging Face converted model repo)
+- `MLX_MODEL_URL` (`.tar.gz` / `.tgz` / `.tar` / `.zip` archive)
+
+Examples:
 
 ```bash
 MLX_MODEL_REPO="your-org/Qwen3.5-9B-mlx-4bit" ./scripts/start_qwen_mlx_server.sh
@@ -107,94 +142,19 @@ MLX_MODEL_REPO="your-org/Qwen3.5-9B-mlx-4bit" ./scripts/start_qwen_mlx_server.sh
 MLX_MODEL_URL="https://your-cdn.example.com/Qwen3.5-9B-mlx-4bit.tar.gz" ./scripts/start_qwen_mlx_server.sh
 ```
 
-Optional:
+Resolution order in script:
 
-```bash
-MLX_MODEL_REPO="your-org/Qwen3.5-9B-mlx-4bit" MLX_MODEL_REVISION="main" ./scripts/start_qwen_mlx_server.sh
-```
+1. Reuse local converted model if present
+2. Otherwise download converted model (repo/url)
+3. Otherwise download base HF model and convert locally
 
-Behavior order in `start_qwen_mlx_server.sh`:
-1. Reuse local converted model if already present.
-2. Otherwise auto-download converted model (repo or URL).
-3. Otherwise auto-download base model `Qwen/Qwen3.5-9B` and convert it locally.
+## Storage Model
 
-## Connect to a Local Model
+- Frontend (IndexedDB): chats, settings, run metadata
+- Sidecar (SQLite): runs, tool/event traces, benchmark reports
+- No cloud persistence in v1
 
-The UI calls `POST {baseUrl}/chat/completions` with OpenAI-compatible payloads.
-
-### Provider presets in the app
-
-- LM Studio: `http://127.0.0.1:1234/v1`
-- Ollama OpenAI mode: `http://127.0.0.1:11434/v1`
-- vLLM: `http://127.0.0.1:8000/v1`
-
-### Example: LM Studio
-
-1. Start LM Studio local server.
-2. Load a compatible Qwen model.
-3. Keep base URL as `http://127.0.0.1:1234/v1` in Settings.
-4. Set model name to the served model identifier.
-
-### Example: Use the Downloaded `models/Qwen3.5-9B` on Apple Silicon (MLX)
-
-This repo includes a helper script that:
-1. Converts the downloaded Hugging Face weights to MLX 4-bit format.
-2. Starts an OpenAI-compatible server on `127.0.0.1:1234`.
-
-```bash
-./scripts/start_qwen_mlx_server.sh
-```
-
-Then in UI Settings:
-
-- Base URL: `http://127.0.0.1:1234/v1`
-- Model: `Qwen3.5-9B`
-
-Optional overrides:
-
-```bash
-HOST=127.0.0.1 PORT=1234 PYTHON_BIN=python3 ./scripts/start_qwen_mlx_server.sh
-```
-
-### Example: vLLM (OpenAI API mode)
-
-```bash
-python -m vllm.entrypoints.openai.api_server \
-  --model /Users/computer/Documents/GitHub/Qwen-setup/models/Qwen3.5-9B \
-  --served-model-name Qwen3.5-9B \
-  --host 127.0.0.1 \
-  --port 8000
-```
-
-Then set:
-
-- Base URL: `http://127.0.0.1:8000/v1`
-- Model: `Qwen3.5-9B`
-
-## Keyboard Shortcuts
-
-- `Enter`: send message
-- `Shift+Enter`: newline
-- `Cmd/Ctrl+N`: new chat
-- `Cmd/Ctrl+,`: open settings
-- `Esc`: close overlays
-
-## Scripts
-
-```bash
-npm run dev        # start local app
-npm run build      # typecheck + production build
-npm run preview    # preview production build
-npm run lint       # eslint
-npm run test       # vitest
-npm run test:watch # vitest watch mode
-npm run test:e2e   # playwright
-./scripts/start_qwen_mlx_server.sh # convert + serve local Qwen3.5-9B via MLX
-```
-
-## Data Model
-
-Local exports use this schema:
+## Export Contract
 
 ```ts
 interface ExportBundleV1 {
@@ -203,10 +163,14 @@ interface ExportBundleV1 {
   threads: ChatThread[]
   messages: ChatMessage[]
   settings: AppSettings
+  runs?: AgentRunRecord[]
 }
 ```
 
-## Notes
+## Stop Everything
 
-- The UI requires an OpenAI-compatible endpoint (`/v1/chat/completions` or `/chat/completions`).
-- If you see a connection error, verify your local server is running and listening on the configured host/port.
+```bash
+kill $(lsof -tiTCP:1234 -sTCP:LISTEN) || true
+kill $(lsof -tiTCP:8787 -sTCP:LISTEN) || true
+kill $(lsof -tiTCP:5173 -sTCP:LISTEN) || true
+```
