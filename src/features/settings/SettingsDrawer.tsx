@@ -128,6 +128,13 @@ export function SettingsDrawer({
               value={settings.provider.baseUrl}
             />
           </label>
+          {settings.provider.preset === 'hf_space' ? (
+            <p className="rounded-lg border border-[var(--surface-stroke)] bg-[var(--surface-soft)] px-3 py-2 text-xs text-[var(--text-muted)]">
+              Use your Space URL in OpenAI format, for example:
+              {' '}
+              <code>https://your-space-name.hf.space/v1</code>
+            </p>
+          ) : null}
 
           <label className="block text-sm text-[var(--text-muted)]">
             Model Name
@@ -136,7 +143,11 @@ export function SettingsDrawer({
               onChange={(event) => {
                 void onProviderChange({ model: event.target.value })
               }}
-              placeholder="Qwen3.5-9B"
+              placeholder={
+                settings.provider.preset === 'hf_space'
+                  ? 'Qwen3.5-0.8B-Q4_K_M.gguf'
+                  : 'Qwen3.5-9B'
+              }
               value={settings.provider.model}
             />
           </label>
@@ -148,7 +159,7 @@ export function SettingsDrawer({
               onChange={(event) => {
                 void onProviderChange({ apiKey: event.target.value })
               }}
-              placeholder="sk-..."
+              placeholder={settings.provider.preset === 'hf_space' ? 'hf_... (optional)' : 'sk-...'}
               value={settings.provider.apiKey ?? ''}
             />
           </label>
