@@ -8,6 +8,8 @@ export type UiDensity = 'comfortable' | 'compact'
 
 export type ModeType = 'chat' | 'agent' | 'deep_think' | 'deep_research' | 'swarm'
 
+export type RuntimeHealthStatus = 'online' | 'degraded' | 'offline'
+
 export interface RunConfig {
   maxSteps: number
   maxSources: number
