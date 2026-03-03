@@ -61,7 +61,7 @@ function formatNetworkError(error: unknown, endpoint: string): Error {
     return new Error(
       [
         `Cannot reach ${endpoint}.`,
-        'Start a local OpenAI-compatible server and verify CORS is enabled for browser requests.',
+        'Start an OpenAI-compatible server and verify CORS is enabled for browser requests.',
       ].join(' '),
     )
   }
@@ -70,7 +70,7 @@ function formatNetworkError(error: unknown, endpoint: string): Error {
     return error
   }
 
-  return new Error('Unknown network error while contacting local model server.')
+  return new Error('Unknown network error while contacting model server.')
 }
 
 export interface StreamChatCompletionOptions {
