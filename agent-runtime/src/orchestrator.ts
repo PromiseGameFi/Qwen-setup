@@ -111,8 +111,8 @@ export class RunOrchestrator {
     return true
   }
 
-  public listRunEvents(runId: string): RunTimelineEvent[] {
-    return this.db.listRunEvents(runId)
+  public listRunEvents(runId: string, afterId?: number): RunTimelineEvent[] {
+    return this.db.listRunEvents(runId, afterId)
   }
 
   private async executeRun(context: RunExecutionContext): Promise<void> {
