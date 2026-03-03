@@ -7,21 +7,9 @@ function renderComposer(onSend = vi.fn()) {
   render(
     <Composer
       canRegenerate={false}
-      mode="chat"
-      onModeChange={vi.fn()}
       onRegenerate={vi.fn()}
-      onRunConfigChange={vi.fn()}
       onSend={onSend}
       onStop={vi.fn()}
-      runConfig={{
-        maxSteps: 8,
-        maxSources: 6,
-        timeBudgetSec: 180,
-        swarmMaxAgents: 4,
-        thinkingPasses: 3,
-      }}
-      runtimeHealth="online"
-      runtimeHealthMessage={null}
       sending={false}
     />,
   )
