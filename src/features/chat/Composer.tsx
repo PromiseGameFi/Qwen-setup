@@ -2,13 +2,20 @@ import { useMemo, useState } from 'react'
 import { ChevronDown, CornerDownLeft, RefreshCcw, Settings2, Square } from 'lucide-react'
 import TextareaAutosize from 'react-textarea-autosize'
 
-import { MODE_LABELS, type ModeType, type RunConfig } from '../../types/chat'
+import {
+  MODE_LABELS,
+  type ModeType,
+  type RunConfig,
+  type RuntimeHealthStatus,
+} from '../../types/chat'
 
 interface ComposerProps {
   sending: boolean
   disabled?: boolean
   mode: ModeType
   runConfig: RunConfig
+  runtimeHealth: RuntimeHealthStatus
+  runtimeHealthMessage: string | null
   onModeChange: (mode: ModeType) => void
   onRunConfigChange: (update: Partial<RunConfig>) => void
   onSend: (prompt: string) => void
@@ -22,6 +29,8 @@ export function Composer({
   disabled,
   mode,
   runConfig,
+  runtimeHealth,
+  runtimeHealthMessage,
   onModeChange,
   onRunConfigChange,
   onSend,
@@ -76,6 +85,19 @@ export function Composer({
               size={13}
             />
           </button>
+
+          <span
+            className={
+              runtimeHealth === 'online'
+                ? 'inline-flex items-center rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700'
+                : runtimeHealth === 'degraded'
+                  ? 'inline-flex items-center rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700'
+                  : 'inline-flex items-center rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-xs font-medium text-red-700'
+            }
+            title={runtimeHealthMessage ?? undefined}
+          >
+            Runtime {runtimeHealth === 'online' ? 'Online' : runtimeHealth === 'degraded' ? 'Degraded' : 'Offline'}
+          </span>
         </div>
 
         {advancedOpen ? (
