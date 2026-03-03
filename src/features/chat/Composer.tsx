@@ -46,7 +46,7 @@ export function Composer({
               handleSend()
             }
           }}
-          placeholder="Message Qwen locally..."
+          placeholder="Message Qwen..."
           value={draft}
         />
 
