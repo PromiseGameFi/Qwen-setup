@@ -90,7 +90,13 @@ function integerInRange(value: unknown, fallback: number, min: number, max: numb
 }
 
 function toProviderPreset(value: unknown): AppSettings['provider']['preset'] {
-  if (value === 'lmstudio' || value === 'ollama' || value === 'vllm' || value === 'custom') {
+  if (
+    value === 'lmstudio' ||
+    value === 'ollama' ||
+    value === 'vllm' ||
+    value === 'hf_space' ||
+    value === 'custom'
+  ) {
     return value
   }
 
