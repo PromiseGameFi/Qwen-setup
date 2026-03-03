@@ -157,10 +157,24 @@ app.get('/api/runs/:runId/stream', async (request, reply) => {
   const paramsSchema = z.object({
     runId: z.string().min(1),
   })
+  const querySchema = z.object({
+    afterId: z.coerce.number().int().nonnegative().optional(),
+  })
 
   const params = paramsSchema.parse(request.params)
+  const query = querySchema.safeParse(request.query)
+  const queryAfterId = query.success ? query.data.afterId : undefined
+  const headerAfterIdRaw = request.headers['last-event-id']
+  const headerAfterId = Number.parseInt(
+    Array.isArray(headerAfterIdRaw) ? headerAfterIdRaw[0] : headerAfterIdRaw ?? '',
+    10,
+  )
+  const afterId =
+    Number.isFinite(headerAfterId) && headerAfterId >= 0
+      ? headerAfterId
+      : queryAfterId
 
-  const history = orchestrator.listRunEvents(params.runId)
+  const history = orchestrator.listRunEvents(params.runId, afterId)
 
   reply.hijack()
 
@@ -178,13 +192,45 @@ app.get('/api/runs/:runId/stream', async (request, reply) => {
   }
 
   sseHub.subscribe(params.runId, response)
+  const keepalive = setInterval(() => {
+    if (response.writableEnded || response.destroyed) {
+      return
+    }
+
+    response.write(': keepalive\n\n')
+  }, 10000)
 
   request.raw.on('close', () => {
+    clearInterval(keepalive)
     sseHub.unsubscribe(params.runId, response)
     if (!response.writableEnded) {
       response.end()
     }
   })
+})
+
+app.get('/api/runs/:runId/events', async (request, reply) => {
+  const paramsSchema = z.object({
+    runId: z.string().min(1),
+  })
+  const querySchema = z.object({
+    afterId: z.coerce.number().int().nonnegative().default(0),
+  })
+
+  const params = paramsSchema.parse(request.params)
+  const query = querySchema.parse(request.query)
+
+  const run = db.getRun(params.runId)
+  if (!run) {
+    return reply.status(404).send({
+      error: 'Run not found.',
+    })
+  }
+
+  return {
+    runId: params.runId,
+    events: db.listRunEvents(params.runId, query.afterId),
+  }
 })
 
 app.post('/api/runs/:runId/cancel', async (request, reply) => {
