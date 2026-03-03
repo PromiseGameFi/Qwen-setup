@@ -7,9 +7,10 @@ describe('db tables', () => {
     await db.threads.clear()
     await db.messages.clear()
     await db.settings.clear()
+    await db.runs.clear()
   })
 
-  it('stores and retrieves threads/messages/settings', async () => {
+  it('stores and retrieves threads/messages/settings/runs', async () => {
     const now = new Date().toISOString()
 
     await db.threads.put({
@@ -29,6 +30,26 @@ describe('db tables', () => {
       status: 'complete',
     })
 
+    await db.runs.put({
+      id: 'run-1',
+      threadId: 'thread-1',
+      mode: 'agent',
+      prompt: 'hello',
+      status: 'completed',
+      createdAt: now,
+      updatedAt: now,
+      citations: [],
+      artifact: {
+        plan: [],
+        toolTrace: [],
+        evidenceTable: [],
+        agentOutputs: [],
+        finalAnswer: 'done',
+      },
+      metrics: {},
+      timeline: [],
+    })
+
     await db.settings.put({
       key: 'app',
       value: {
@@ -41,13 +62,29 @@ describe('db tables', () => {
           maxTokens: 512,
           stream: true,
         },
+        runtime: {
+          sidecarBaseUrl: 'http://127.0.0.1:8787',
+          defaultMode: 'chat',
+          runConfig: {
+            maxSteps: 8,
+            maxSources: 6,
+            timeBudgetSec: 180,
+            swarmMaxAgents: 4,
+            thinkingPasses: 3,
+          },
+          providerKeys: {
+            tavilyApiKey: '',
+            braveApiKey: '',
+          },
+        },
         uiDensity: 'comfortable',
-        schemaVersion: 1,
+        schemaVersion: 2,
       },
     })
 
     expect(await db.threads.count()).toBe(1)
     expect(await db.messages.where('threadId').equals('thread-1').count()).toBe(1)
     expect(await db.settings.get('app')).toBeTruthy()
+    expect(await db.runs.count()).toBe(1)
   })
 })
