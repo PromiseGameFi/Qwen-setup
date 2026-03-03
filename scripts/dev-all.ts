@@ -5,11 +5,27 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 
 type ManagedService = 'model' | 'sidecar' | 'ui'
+type DevAllMode = 'local' | 'hf'
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm'
 
-const MODEL_HEALTH_URL = 'http://127.0.0.1:1234/v1/models'
+function parseMode(): DevAllMode {
+  const cliMode = process.argv.find((argument) => argument.startsWith('--mode='))?.split('=')[1]
+  const envMode = process.env.DEV_ALL_MODE
+  const resolved = cliMode ?? envMode
+  return resolved === 'hf' ? 'hf' : 'local'
+}
+
+function normalizeBaseUrl(raw: string): string {
+  return raw.trim().replace(/\/+$/, '')
+}
+
+const mode = parseMode()
+const modelBaseUrl = normalizeBaseUrl(
+  process.env.MODEL_BASE_URL ?? process.env.VITE_MODEL_BASE_URL ?? 'http://127.0.0.1:1234/v1',
+)
+const MODEL_HEALTH_URL = `${modelBaseUrl}/models`
 const SIDECAR_HEALTH_URL = 'http://127.0.0.1:8787/api/health'
 const UI_HEALTH_URL = 'http://127.0.0.1:5173'
 
@@ -247,16 +263,32 @@ async function shutdown(exitCode: number): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  log('starting model server...')
-  const model = spawnService('model', path.join(rootDir, 'scripts', 'start_qwen_mlx_server.sh'), [])
-  watchFatalExit('model', 'model server', model)
-  await waitForHealth({
-    name: 'model server',
-    url: MODEL_HEALTH_URL,
-    timeoutMs: MODEL_HEALTH_TIMEOUT_MS,
-    onAbort: () => !children.has('model'),
-  })
-  log(`model is healthy at ${MODEL_HEALTH_URL}`)
+  if (mode === 'local') {
+    log('starting local model server...')
+    const model = spawnService('model', path.join(rootDir, 'scripts', 'start_qwen_mlx_server.sh'), [])
+    watchFatalExit('model', 'model server', model)
+    await waitForHealth({
+      name: 'model server',
+      url: MODEL_HEALTH_URL,
+      timeoutMs: MODEL_HEALTH_TIMEOUT_MS,
+      onAbort: () => !children.has('model'),
+    })
+    log(`model is healthy at ${MODEL_HEALTH_URL}`)
+  } else {
+    log(`mode=hf: skipping local model startup. Expecting remote model at ${modelBaseUrl}`)
+    try {
+      await waitForHealth({
+        name: 'remote model endpoint',
+        url: MODEL_HEALTH_URL,
+        timeoutMs: Math.min(MODEL_HEALTH_TIMEOUT_MS, 45000),
+      })
+      log(`remote model endpoint is reachable at ${MODEL_HEALTH_URL}`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'remote model probe failed'
+      logError(`remote model endpoint is not reachable yet (${message})`)
+      logError('UI and sidecar will still start; update model URL/settings and retry when ready.')
+    }
+  }
 
   log('starting sidecar...')
   startSidecar()
@@ -280,7 +312,11 @@ async function main(): Promise<void> {
   })
 
   log(`UI is healthy at ${UI_HEALTH_URL}`)
-  log('all services are running (model:1234, sidecar:8787, ui:5173)')
+  if (mode === 'local') {
+    log('all services are running (mode=local, model:1234, sidecar:8787, ui:5173)')
+  } else {
+    log(`all services are running (mode=hf, remote model:${modelBaseUrl}, sidecar:8787, ui:5173)`)
+  }
 }
 
 process.on('SIGINT', () => {
