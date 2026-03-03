@@ -191,6 +191,20 @@ function buildEmptyRun(id: string, threadId: string, mode: ModeType, prompt: str
   }
 }
 
+function asError(error: unknown, fallback: string): Error {
+  if (error instanceof Error) {
+    return error
+  }
+
+  return new Error(fallback)
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms)
+  })
+}
+
 async function persistSettings(settings: AppSettings): Promise<void> {
   await db.settings.put({ key: 'app', value: normalizeSettings(settings) })
 }
@@ -428,6 +442,8 @@ export const useChatStore = create<ChatState>((set, get) => {
       },
     }))
 
+    let streamError: Error | null = null
+
     try {
       await streamRun({
         runId,
@@ -514,8 +530,39 @@ export const useChatStore = create<ChatState>((set, get) => {
           }
         },
       })
-    } finally {
-      const runResponse = await getRun(state.settings.runtime.sidecarBaseUrl, runId)
+    } catch (error) {
+      streamError = asError(error, 'Stream connection failed.')
+    }
+
+    let runResponse: Awaited<ReturnType<typeof getRun>> | null = null
+    let runLookupError: Error | null = null
+    const maxAttempts = streamError ? 5 : 2
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      try {
+        runResponse = await getRun(state.settings.runtime.sidecarBaseUrl, runId)
+        runLookupError = null
+
+        const status = runResponse.run.status
+        const isTerminal = status === 'completed' || status === 'failed' || status === 'cancelled'
+
+        if (isTerminal || !streamError) {
+          break
+        }
+      } catch (error) {
+        runLookupError = asError(error, 'Failed to fetch run state.')
+      }
+
+      if (attempt < maxAttempts - 1) {
+        await wait(350 * (attempt + 1))
+      }
+    }
+
+    if (!runResponse) {
+      throw runLookupError ?? streamError ?? new Error('Failed to fetch run state.')
+    }
+
+    {
       const finalRun: AgentRunRecord = {
         ...runResponse.run,
         timeline: runResponse.events,
@@ -609,6 +656,13 @@ export const useChatStore = create<ChatState>((set, get) => {
       })
 
       await persistCurrentRun(runId)
+
+      const isTerminal =
+        finalRun.status === 'completed' || finalRun.status === 'failed' || finalRun.status === 'cancelled'
+
+      if (streamError && !isTerminal) {
+        throw streamError
+      }
     }
   }
 
