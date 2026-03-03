@@ -184,6 +184,7 @@ export interface ProviderPresetDefinition {
   id: Exclude<ProviderPreset, 'custom'>
   label: string
   baseUrl: string
+  defaultModel: string
 }
 
 export interface BenchmarkModeResult {
@@ -204,28 +205,67 @@ export interface BenchmarkReport {
   }
 }
 
+function resolveProviderPreset(value: string | undefined): ProviderPreset {
+  if (
+    value === 'lmstudio' ||
+    value === 'ollama' ||
+    value === 'vllm' ||
+    value === 'hf_space' ||
+    value === 'custom'
+  ) {
+    return value
+  }
+
+  return 'lmstudio'
+}
+
+const DEFAULT_PROVIDER_PRESET = resolveProviderPreset(import.meta.env.VITE_PROVIDER_PRESET)
+const LOCAL_MODEL_BASE_URL = envString(import.meta.env.VITE_LOCAL_MODEL_BASE_URL, 'http://127.0.0.1:1234/v1')
+const LOCAL_MODEL_NAME = envString(import.meta.env.VITE_LOCAL_MODEL_NAME, 'Qwen3.5-9B')
+const HF_SPACE_BASE_URL = envString(
+  import.meta.env.VITE_HF_SPACE_BASE_URL,
+  'https://your-space-name.hf.space/v1',
+)
+const HF_SPACE_MODEL_NAME = envString(
+  import.meta.env.VITE_HF_SPACE_MODEL_NAME,
+  'Qwen3.5-0.8B-Q4_K_M.gguf',
+)
+const HF_SPACE_API_KEY = envString(import.meta.env.VITE_HF_SPACE_API_KEY, '')
+
 export const PROVIDER_PRESETS: ProviderPresetDefinition[] = [
   {
     id: 'lmstudio',
     label: 'LM Studio',
-    baseUrl: 'http://127.0.0.1:1234/v1',
+    baseUrl: LOCAL_MODEL_BASE_URL,
+    defaultModel: LOCAL_MODEL_NAME,
   },
   {
     id: 'ollama',
     label: 'Ollama (OpenAI mode)',
     baseUrl: 'http://127.0.0.1:11434/v1',
+    defaultModel: LOCAL_MODEL_NAME,
   },
   {
     id: 'vllm',
     label: 'vLLM',
     baseUrl: 'http://127.0.0.1:8000/v1',
+    defaultModel: LOCAL_MODEL_NAME,
   },
   {
     id: 'hf_space',
     label: 'Hugging Face Space',
-    baseUrl: 'https://your-space-name.hf.space/v1',
+    baseUrl: HF_SPACE_BASE_URL,
+    defaultModel: HF_SPACE_MODEL_NAME,
   },
 ]
+
+export function getProviderPresetDefinition(preset: ProviderPreset): ProviderPresetDefinition | null {
+  if (preset === 'custom') {
+    return null
+  }
+
+  return PROVIDER_PRESETS.find((entry) => entry.id === preset) ?? null
+}
 
 export const DEFAULT_RUN_CONFIG: RunConfig = {
   maxSteps: 8,
@@ -245,17 +285,19 @@ export const MODE_LABELS: Record<ModeType, string> = {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   provider: {
-    preset:
-      import.meta.env.VITE_PROVIDER_PRESET === 'lmstudio' ||
-      import.meta.env.VITE_PROVIDER_PRESET === 'ollama' ||
-      import.meta.env.VITE_PROVIDER_PRESET === 'vllm' ||
-      import.meta.env.VITE_PROVIDER_PRESET === 'hf_space' ||
-      import.meta.env.VITE_PROVIDER_PRESET === 'custom'
-        ? import.meta.env.VITE_PROVIDER_PRESET
-        : 'lmstudio',
-    baseUrl: envString(import.meta.env.VITE_MODEL_BASE_URL, 'http://127.0.0.1:1234/v1'),
-    apiKey: envString(import.meta.env.VITE_MODEL_API_KEY, ''),
-    model: envString(import.meta.env.VITE_MODEL_NAME, 'Qwen3.5-9B'),
+    preset: DEFAULT_PROVIDER_PRESET,
+    baseUrl: envString(
+      import.meta.env.VITE_MODEL_BASE_URL,
+      getProviderPresetDefinition(DEFAULT_PROVIDER_PRESET)?.baseUrl ?? LOCAL_MODEL_BASE_URL,
+    ),
+    apiKey: envString(
+      import.meta.env.VITE_MODEL_API_KEY,
+      DEFAULT_PROVIDER_PRESET === 'hf_space' ? HF_SPACE_API_KEY : '',
+    ),
+    model: envString(
+      import.meta.env.VITE_MODEL_NAME,
+      getProviderPresetDefinition(DEFAULT_PROVIDER_PRESET)?.defaultModel ?? LOCAL_MODEL_NAME,
+    ),
     temperature: envNumber(import.meta.env.VITE_MODEL_TEMPERATURE, 0.7),
     maxTokens: envInteger(import.meta.env.VITE_MODEL_MAX_TOKENS, 1024),
     stream: true,
