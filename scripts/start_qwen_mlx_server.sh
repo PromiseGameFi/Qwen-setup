@@ -2,6 +2,14 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if [ -f "$ROOT_DIR/.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$ROOT_DIR/.env"
+  set +a
+fi
+
 HF_MODEL_PATH="${1:-$ROOT_DIR/models/Qwen3.5-9B}"
 MLX_MODEL_PATH="${2:-$ROOT_DIR/models/Qwen3.5-9B-mlx-4bit}"
 MODEL_ALIAS="${MODEL_ALIAS:-Qwen3.5-9B}"
