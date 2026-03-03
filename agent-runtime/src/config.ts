@@ -1,11 +1,15 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import dotenv from 'dotenv'
 
 import type { ProviderKeys } from './types'
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url))
 const ROOT_DIR = path.resolve(currentDir, '..', '..')
+dotenv.config({
+  path: path.join(ROOT_DIR, '.env'),
+})
 
 export interface RuntimeConfig {
   host: string
@@ -24,7 +28,10 @@ export function loadRuntimeConfig(): RuntimeConfig {
     host: process.env.AGENT_RUNTIME_HOST ?? '127.0.0.1',
     port: parseNumber(process.env.AGENT_RUNTIME_PORT, 8787),
     databasePath: process.env.AGENT_RUNTIME_DB ?? path.join(dataDir, 'runtime.sqlite'),
-    defaultModelBaseUrl: process.env.MODEL_BASE_URL ?? 'http://127.0.0.1:1234/v1',
+    defaultModelBaseUrl:
+      process.env.MODEL_BASE_URL ??
+      process.env.VITE_MODEL_BASE_URL ??
+      'http://127.0.0.1:1234/v1',
     requestTimeoutMs: parseNumber(process.env.AGENT_REQUEST_TIMEOUT_MS, 45000),
     providerConfigPath:
       process.env.AGENT_PROVIDER_CONFIG ?? path.join(dataDir, 'provider-keys.json'),
