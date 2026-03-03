@@ -1,0 +1,46 @@
+import { fireEvent, render, screen } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
+
+import { Composer } from './Composer'
+
+describe('Composer', () => {
+  it('submits on Enter', () => {
+    const onSend = vi.fn()
+
+    render(
+      <Composer
+        canRegenerate={false}
+        onRegenerate={vi.fn()}
+        onSend={onSend}
+        onStop={vi.fn()}
+        sending={false}
+      />,
+    )
+
+    const input = screen.getByPlaceholderText('Message Qwen locally...')
+    fireEvent.change(input, { target: { value: 'Hello world' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(onSend).toHaveBeenCalledWith('Hello world')
+  })
+
+  it('does not submit on Shift+Enter', () => {
+    const onSend = vi.fn()
+
+    render(
+      <Composer
+        canRegenerate={false}
+        onRegenerate={vi.fn()}
+        onSend={onSend}
+        onStop={vi.fn()}
+        sending={false}
+      />,
+    )
+
+    const input = screen.getByPlaceholderText('Message Qwen locally...')
+    fireEvent.change(input, { target: { value: 'Hello world' } })
+    fireEvent.keyDown(input, { key: 'Enter', shiftKey: true })
+
+    expect(onSend).not.toHaveBeenCalled()
+  })
+})
