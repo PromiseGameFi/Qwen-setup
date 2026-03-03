@@ -4,7 +4,7 @@ test('create and switch chat thread', async ({ page }) => {
   await page.goto('/')
 
   await page.getByRole('button', { name: /^new chat$/i }).click()
-  await page.getByPlaceholder('Message Qwen locally...').fill('hello local qwen')
+  await page.getByPlaceholder('Message Qwen...').fill('hello local qwen')
   await page.keyboard.press('Enter')
 
   await expect(page.getByText('hello local qwen')).toBeVisible()
@@ -45,7 +45,7 @@ test('mocked chat response streams and persists after reload', async ({ page }) 
   })
 
   await page.goto('/')
-  await page.getByPlaceholder('Message Qwen locally...').fill('test streaming')
+  await page.getByPlaceholder('Message Qwen...').fill('test streaming')
   await page.keyboard.press('Enter')
 
   await expect(
