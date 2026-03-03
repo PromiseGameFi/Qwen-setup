@@ -2,13 +2,40 @@ export type Role = 'system' | 'user' | 'assistant'
 
 export type MessageStatus = 'streaming' | 'complete' | 'error'
 
-export type ProviderPreset = 'lmstudio' | 'ollama' | 'vllm' | 'custom'
+export type ProviderPreset = 'lmstudio' | 'ollama' | 'vllm' | 'hf_space' | 'custom'
 
 export type UiDensity = 'comfortable' | 'compact'
 
 export type ModeType = 'chat' | 'agent' | 'deep_think' | 'deep_research' | 'swarm'
 
 export type RuntimeHealthStatus = 'online' | 'degraded' | 'offline'
+
+function envString(value: string | undefined, fallback: string): string {
+  if (typeof value !== 'string') {
+    return fallback
+  }
+
+  const trimmed = value.trim()
+  return trimmed || fallback
+}
+
+function envNumber(value: string | undefined, fallback: number): number {
+  if (typeof value !== 'string') {
+    return fallback
+  }
+
+  const parsed = Number.parseFloat(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function envInteger(value: string | undefined, fallback: number): number {
+  if (typeof value !== 'string') {
+    return fallback
+  }
+
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
 
 export interface RunConfig {
   maxSteps: number
@@ -193,6 +220,11 @@ export const PROVIDER_PRESETS: ProviderPresetDefinition[] = [
     label: 'vLLM',
     baseUrl: 'http://127.0.0.1:8000/v1',
   },
+  {
+    id: 'hf_space',
+    label: 'Hugging Face Space',
+    baseUrl: 'https://your-space-name.hf.space/v1',
+  },
 ]
 
 export const DEFAULT_RUN_CONFIG: RunConfig = {
@@ -213,21 +245,28 @@ export const MODE_LABELS: Record<ModeType, string> = {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   provider: {
-    preset: 'lmstudio',
-    baseUrl: 'http://127.0.0.1:1234/v1',
-    apiKey: '',
-    model: 'Qwen3.5-9B',
-    temperature: 0.7,
-    maxTokens: 1024,
+    preset:
+      import.meta.env.VITE_PROVIDER_PRESET === 'lmstudio' ||
+      import.meta.env.VITE_PROVIDER_PRESET === 'ollama' ||
+      import.meta.env.VITE_PROVIDER_PRESET === 'vllm' ||
+      import.meta.env.VITE_PROVIDER_PRESET === 'hf_space' ||
+      import.meta.env.VITE_PROVIDER_PRESET === 'custom'
+        ? import.meta.env.VITE_PROVIDER_PRESET
+        : 'lmstudio',
+    baseUrl: envString(import.meta.env.VITE_MODEL_BASE_URL, 'http://127.0.0.1:1234/v1'),
+    apiKey: envString(import.meta.env.VITE_MODEL_API_KEY, ''),
+    model: envString(import.meta.env.VITE_MODEL_NAME, 'Qwen3.5-9B'),
+    temperature: envNumber(import.meta.env.VITE_MODEL_TEMPERATURE, 0.7),
+    maxTokens: envInteger(import.meta.env.VITE_MODEL_MAX_TOKENS, 1024),
     stream: true,
   },
   runtime: {
-    sidecarBaseUrl: 'http://127.0.0.1:8787',
+    sidecarBaseUrl: envString(import.meta.env.VITE_SIDECAR_BASE_URL, 'http://127.0.0.1:8787'),
     defaultMode: 'chat',
     runConfig: DEFAULT_RUN_CONFIG,
     providerKeys: {
-      tavilyApiKey: '',
-      braveApiKey: '',
+      tavilyApiKey: envString(import.meta.env.VITE_TAVILY_API_KEY, ''),
+      braveApiKey: envString(import.meta.env.VITE_BRAVE_API_KEY, ''),
     },
   },
   uiDensity: 'comfortable',
