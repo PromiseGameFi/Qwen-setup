@@ -61,6 +61,18 @@ Notes:
 - `start_qwen_mlx_server.sh` sources `.env` automatically.
 - `.env` is gitignored. Commit only `.env.example`.
 
+## Agent Brain JSON
+
+The assistant persona and first-chat welcome behavior are controlled by:
+
+- `public/agent-brain.json`
+
+How it works:
+
+- The app injects this brain as a system prompt on each chat run.
+- On the first assistant turn in a thread, it applies welcome rules from the JSON.
+- It includes variation hints and a per-thread random seed so welcomes are not identical every time.
+
 ## Quick Start (One Command)
 
 1. Install dependencies
@@ -71,7 +83,7 @@ python3 -m pip install mlx-lm
 cp .env.example .env
 ```
 
-2. Start model + sidecar + UI together
+2. Start local model + sidecar + UI together
 
 ```bash
 npm run dev:all
@@ -92,6 +104,30 @@ Notes:
 - First run can take longer if model download/conversion is needed.
 - `dev:all` auto-restarts sidecar with bounded backoff if it drops.
 - If model or UI exits, `dev:all` stops all services to avoid orphan listeners.
+
+## Switch Local <-> Hugging Face
+
+Use Settings -> **Model Provider** quick actions:
+
+- **Use Local Runtime** (original local flow)
+- **Use HF Space** (remote Hugging Face endpoint)
+
+Or switch from terminal:
+
+```bash
+npm run dev:all       # local model + sidecar + UI
+npm run dev:all:hf    # remote model (HF/custom) + sidecar + UI
+```
+
+When using HF mode, align these `.env` values so frontend and sidecar hit the same endpoint:
+
+```bash
+VITE_PROVIDER_PRESET=hf_space
+VITE_MODEL_BASE_URL=https://<your-space>.hf.space/v1
+VITE_MODEL_NAME=Qwen3.5-0.8B-Q4_K_M.gguf
+VITE_MODEL_API_KEY=
+MODEL_BASE_URL=https://<your-space>.hf.space/v1
+```
 
 ## Hugging Face Space (Qwen3.5-0.8B)
 
@@ -126,6 +162,7 @@ npm run dev -- --host 127.0.0.1 --port 5173
 
 ```bash
 npm run dev:all:health
+npm run dev:all:health:hf
 curl http://127.0.0.1:1234/v1/models
 curl http://127.0.0.1:8787/api/health
 curl http://127.0.0.1:5173
@@ -137,8 +174,10 @@ curl http://127.0.0.1:5173
 npm run dev           # frontend
 npm run dev:ui        # frontend (same as dev)
 npm run dev:sidecar   # agent runtime sidecar
-npm run dev:all       # model + sidecar + frontend supervisor
-npm run dev:all:health # quick health probe for ports 1234/8787/5173
+npm run dev:all       # local model + sidecar + frontend supervisor
+npm run dev:all:hf    # remote model + sidecar + frontend supervisor
+npm run dev:all:health # local stack health probe
+npm run dev:all:health:hf # HF/remote stack health probe
 npm run build         # typecheck + frontend build
 npm run typecheck     # TS project references (frontend + sidecar)
 npm run lint          # eslint
@@ -189,7 +228,8 @@ If you see runtime stream errors such as `Cannot reach agent runtime ... /stream
 1. Confirm stack health:
    - `npm run dev:all:health`
 2. If sidecar is offline, restart the supervised stack:
-   - `npm run dev:all`
+   - local: `npm run dev:all`
+   - HF/remote: `npm run dev:all:hf`
 3. Keep mode selected (`Agent`, `Deep Think`, `Deep Research`, `Swarm`) and retry.
    - The app now attempts reconnect/resume first, then incremental polling fallback before terminal failure.
 4. Check ports are free if startup fails:
@@ -254,7 +294,7 @@ interface ExportBundleV1 {
 
 ## Stop Everything
 
-If running with `npm run dev:all`, press `Ctrl+C` in that terminal.
+If running with `npm run dev:all` or `npm run dev:all:hf`, press `Ctrl+C` in that terminal.
 
 Manual cleanup:
 
