@@ -107,9 +107,17 @@ export class RuntimeDatabase {
     }
   }
 
-  public listRunEvents(runId: string): RunTimelineEvent[] {
+  public listRunEvents(runId: string, afterId?: number): RunTimelineEvent[] {
+    const hasAfterId = Number.isFinite(afterId)
     const statement = this.database.prepare(
+      hasAfterId
+        ? `
+      SELECT id, run_id, event_name, payload_json, created_at
+      FROM run_events
+      WHERE run_id = ? AND id > ?
+      ORDER BY id ASC
       `
+        : `
       SELECT id, run_id, event_name, payload_json, created_at
       FROM run_events
       WHERE run_id = ?
@@ -117,7 +125,10 @@ export class RuntimeDatabase {
       `,
     )
 
-    const rows = statement.all(runId) as Array<Record<string, unknown>>
+    const rows = hasAfterId
+      ? (statement.all(runId, Math.round(afterId as number)) as Array<Record<string, unknown>>)
+      : (statement.all(runId) as Array<Record<string, unknown>>)
+
     return rows.map((row) => ({
       id: Number(row.id),
       runId: String(row.run_id),
