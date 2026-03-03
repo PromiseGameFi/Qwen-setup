@@ -1,9 +1,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import type { ProviderKeys } from './types'
 
-const ROOT_DIR = path.resolve(__dirname, '..', '..')
+const currentDir = path.dirname(fileURLToPath(import.meta.url))
+const ROOT_DIR = path.resolve(currentDir, '..', '..')
 
 export interface RuntimeConfig {
   host: string
