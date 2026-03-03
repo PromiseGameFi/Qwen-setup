@@ -30,6 +30,8 @@ export function AppShell() {
     activeRunIdByThread,
     benchmarkReport,
     benchmarkLoading,
+    runtimeHealth,
+    runtimeHealthMessage,
     initialize,
     createThread,
     setActiveThread,
@@ -54,6 +56,7 @@ export function AppShell() {
     clearAllChats,
     runBenchmarks,
     refreshBenchmark,
+    checkRuntimeHealth,
   } = useChatStore()
 
   const activeMessages = useMemo(() => {
@@ -128,6 +131,22 @@ export function AppShell() {
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [createThread, setCitationsDrawerOpen, setMobileSidebarOpen, setSettingsOpen])
+
+  useEffect(() => {
+    const shouldPollRuntime = activeMode !== 'chat' || settingsOpen
+    if (!shouldPollRuntime) {
+      return
+    }
+
+    void checkRuntimeHealth()
+    const intervalId = window.setInterval(() => {
+      void checkRuntimeHealth()
+    }, 12000)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [activeMode, checkRuntimeHealth, settingsOpen])
 
   const handleExport = async (): Promise<void> => {
     const payload = await exportChats()
@@ -268,6 +287,8 @@ export function AppShell() {
               }}
               onStop={stopStreaming}
               runConfig={settings.runtime.runConfig}
+              runtimeHealth={runtimeHealth}
+              runtimeHealthMessage={runtimeHealthMessage}
               sending={sending}
             />
           </>
