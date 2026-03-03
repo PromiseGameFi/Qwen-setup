@@ -5,7 +5,10 @@ import {
   createRun,
   getLatestBenchmark,
   getRun,
+  getRunEventsSince,
+  getRuntimeHealth,
   runBenchmark,
+  RuntimeTransportError,
   saveProviderKeys,
   streamRun,
 } from '../lib/api/agentRuntimeClient'
@@ -23,6 +26,7 @@ import {
   type ChatThread,
   type ModeType,
   type ProviderConfig,
+  type RuntimeHealthStatus,
   type RunConfig,
   type RunTimelineEvent,
   type UiDensity,
@@ -53,6 +57,9 @@ interface ChatState {
   activeRunIdByThread: Record<string, string | null>
   benchmarkReport: BenchmarkReport | null
   benchmarkLoading: boolean
+  runtimeHealth: RuntimeHealthStatus
+  runtimeHealthMessage: string | null
+  runtimeReconnectAttempts: number
   initialize: () => Promise<void>
   createThread: () => Promise<void>
   setActiveThread: (threadId: string) => void
@@ -77,6 +84,7 @@ interface ChatState {
   clearAllChats: () => Promise<void>
   runBenchmarks: () => Promise<void>
   refreshBenchmark: () => Promise<void>
+  checkRuntimeHealth: () => Promise<void>
 }
 
 function nowIso(): string {
@@ -205,6 +213,11 @@ function wait(ms: number): Promise<void> {
   })
 }
 
+function isConnectivityBanner(message: string): boolean {
+  const normalized = message.toLowerCase()
+  return normalized.includes('cannot reach agent runtime') || normalized.includes('sidecar')
+}
+
 async function persistSettings(settings: AppSettings): Promise<void> {
   await db.settings.put({ key: 'app', value: normalizeSettings(settings) })
 }
@@ -217,6 +230,29 @@ export const useChatStore = create<ChatState>((set, get) => {
     }
 
     await db.runs.put(run)
+  }
+
+  const applyRuntimeHealth = (
+    status: RuntimeHealthStatus,
+    message?: string | null,
+    reconnectAttempts?: number,
+  ): void => {
+    set((state) => ({
+      ...state,
+      runtimeHealth: status,
+      runtimeHealthMessage: message ?? null,
+      runtimeReconnectAttempts:
+        reconnectAttempts === undefined ? state.runtimeReconnectAttempts : reconnectAttempts,
+      banner:
+        status === 'offline' && message
+          ? {
+              type: 'error',
+              message,
+            }
+          : state.banner && isConnectivityBanner(state.banner.message)
+            ? null
+            : state.banner,
+    }))
   }
 
   const appendTimelineEvent = (threadId: string, event: RunTimelineEvent): void => {
@@ -414,6 +450,15 @@ export const useChatStore = create<ChatState>((set, get) => {
       banner: null,
     }))
 
+    const preflightHealth = await getRuntimeHealth(state.settings.runtime.sidecarBaseUrl)
+    applyRuntimeHealth(preflightHealth.status, preflightHealth.message, 0)
+    if (preflightHealth.status === 'offline') {
+      throw new Error(
+        preflightHealth.message ??
+          `Cannot reach agent runtime at ${state.settings.runtime.sidecarBaseUrl}. Start the sidecar with \`npm run dev:all\` or \`npm run dev:sidecar\`.`,
+      )
+    }
+
     const created = await createRun({
       threadId,
       mode,
@@ -442,101 +487,127 @@ export const useChatStore = create<ChatState>((set, get) => {
       },
     }))
 
+    const seenEventIds = new Set<number>()
+    let lastEventId = 0
+    let reconnectCount = 0
+
+    const consumeEvent = (event: RunTimelineEvent): void => {
+      if (event.id > 0) {
+        if (seenEventIds.has(event.id)) {
+          return
+        }
+        seenEventIds.add(event.id)
+        lastEventId = Math.max(lastEventId, event.id)
+      }
+
+      appendTimelineEvent(threadId, event)
+
+      set((current) => {
+        const run = current.runsById[runId] ?? buildEmptyRun(runId, threadId, mode, prompt)
+        const nextRun: AgentRunRecord = {
+          ...run,
+          updatedAt: nowIso(),
+          timeline: [...run.timeline, event].sort((a, b) => a.id - b.id),
+        }
+
+        if (event.event === 'citation.added') {
+          nextRun.citations = [
+            ...nextRun.citations,
+            {
+              sourceId: String(event.payload.sourceId ?? `S${nextRun.citations.length + 1}`),
+              url: String(event.payload.url ?? ''),
+              title: String(event.payload.title ?? 'Source'),
+              snippet: String(event.payload.snippet ?? ''),
+              claimRef: String(event.payload.claimRef ?? ''),
+              confidence:
+                typeof event.payload.confidence === 'number'
+                  ? event.payload.confidence
+                  : 0.5,
+            },
+          ]
+        }
+
+        if (event.event === 'run.failed') {
+          nextRun.status = 'failed'
+          nextRun.error = String(event.payload.message ?? 'Run failed.')
+        }
+
+        if (event.event === 'run.completed') {
+          nextRun.status = 'completed'
+        }
+
+        if (event.event === 'run.cancelled') {
+          nextRun.status = 'cancelled'
+        }
+
+        return {
+          ...current,
+          runsById: {
+            ...current.runsById,
+            [runId]: nextRun,
+          },
+        }
+      })
+
+      if (event.event === 'draft.delta') {
+        const delta = typeof event.payload.delta === 'string' ? event.payload.delta : ''
+        if (!delta) {
+          return
+        }
+
+        set((current) => ({
+          ...current,
+          messagesByThread: replaceMessage(
+            current.messagesByThread,
+            threadId,
+            assistantMessageId,
+            (message) => ({
+              ...message,
+              content: message.content + delta,
+            }),
+          ),
+        }))
+
+        const currentAssistant =
+          get()
+            .messagesByThread[threadId]
+            ?.find((message) => message.id === assistantMessageId)
+            ?.content ?? ''
+
+        void db.messages.update(assistantMessageId, {
+          content: currentAssistant,
+        })
+      }
+    }
+
     let streamError: Error | null = null
 
     try {
-      await streamRun({
+      const streamResult = await streamRun({
         runId,
         sidecarBaseUrl: state.settings.runtime.sidecarBaseUrl,
         signal: streamController.signal,
-        onEvent: (event) => {
-          appendTimelineEvent(threadId, event)
-
-          set((current) => {
-            const run = current.runsById[runId] ?? buildEmptyRun(runId, threadId, mode, prompt)
-            const nextRun: AgentRunRecord = {
-              ...run,
-              updatedAt: nowIso(),
-              timeline: [...run.timeline, event].sort((a, b) => a.id - b.id),
-            }
-
-            if (event.event === 'citation.added') {
-              nextRun.citations = [
-                ...nextRun.citations,
-                {
-                  sourceId: String(event.payload.sourceId ?? `S${nextRun.citations.length + 1}`),
-                  url: String(event.payload.url ?? ''),
-                  title: String(event.payload.title ?? 'Source'),
-                  snippet: String(event.payload.snippet ?? ''),
-                  claimRef: String(event.payload.claimRef ?? ''),
-                  confidence:
-                    typeof event.payload.confidence === 'number'
-                      ? event.payload.confidence
-                      : 0.5,
-                },
-              ]
-            }
-
-            if (event.event === 'run.failed') {
-              nextRun.status = 'failed'
-              nextRun.error = String(event.payload.message ?? 'Run failed.')
-            }
-
-            if (event.event === 'run.completed') {
-              nextRun.status = 'completed'
-            }
-
-            if (event.event === 'run.cancelled') {
-              nextRun.status = 'cancelled'
-            }
-
-            return {
-              ...current,
-              runsById: {
-                ...current.runsById,
-                [runId]: nextRun,
-              },
-            }
-          })
-
-          if (event.event === 'draft.delta') {
-            const delta = typeof event.payload.delta === 'string' ? event.payload.delta : ''
-            if (!delta) {
-              return
-            }
-
-            set((current) => ({
-              ...current,
-              messagesByThread: replaceMessage(
-                current.messagesByThread,
-                threadId,
-                assistantMessageId,
-                (message) => ({
-                  ...message,
-                  content: message.content + delta,
-                }),
-              ),
-            }))
-
-            const currentAssistant =
-              get()
-                .messagesByThread[threadId]
-                ?.find((message) => message.id === assistantMessageId)
-                ?.content ?? ''
-
-            void db.messages.update(assistantMessageId, {
-              content: currentAssistant,
-            })
-          }
-        },
+        afterId: lastEventId,
+        maxReconnects: 5,
+        onEvent: consumeEvent,
       })
+
+      reconnectCount = streamResult.reconnectCount
+      applyRuntimeHealth('online', null, reconnectCount)
     } catch (error) {
       streamError = asError(error, 'Stream connection failed.')
+      const runtimeError = error instanceof RuntimeTransportError ? error : null
+
+      applyRuntimeHealth(
+        runtimeError?.code === 'network_unreachable' ? 'offline' : 'degraded',
+        streamError.message,
+        reconnectCount,
+      )
     }
 
     let runResponse: Awaited<ReturnType<typeof getRun>> | null = null
     let runLookupError: Error | null = null
-    const maxAttempts = streamError ? 5 : 2
+    const maxAttempts = streamError ? 1 : 2
 
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       try {
@@ -558,11 +629,47 @@ export const useChatStore = create<ChatState>((set, get) => {
       }
     }
 
+    if (!runResponse && streamError) {
+      const recoveryDeadline = Date.now() + 30000
+
+      while (Date.now() < recoveryDeadline && !streamController.signal.aborted) {
+        try {
+          const incrementalEvents = await getRunEventsSince(
+            state.settings.runtime.sidecarBaseUrl,
+            runId,
+            lastEventId,
+          )
+
+          for (const event of incrementalEvents) {
+            consumeEvent(event)
+          }
+
+          runResponse = await getRun(state.settings.runtime.sidecarBaseUrl, runId)
+          runLookupError = null
+
+          const status = runResponse.run.status
+          const isTerminal =
+            status === 'completed' || status === 'failed' || status === 'cancelled'
+          if (isTerminal) {
+            break
+          }
+        } catch (error) {
+          runLookupError = asError(error, 'Failed to recover run state after stream interruption.')
+        }
+
+        await wait(1000)
+      }
+    }
+
     if (!runResponse) {
       throw runLookupError ?? streamError ?? new Error('Failed to fetch run state.')
     }
 
     {
+      if (streamError) {
+        applyRuntimeHealth('online', null, reconnectCount)
+      }
+
       const finalRun: AgentRunRecord = {
         ...runResponse.run,
         timeline: runResponse.events,
@@ -616,36 +723,46 @@ export const useChatStore = create<ChatState>((set, get) => {
           }
         : null
 
-      set((current) => ({
-        ...current,
-        sending: false,
-        streamController: null,
-        banner:
-          finalRun.status === 'failed'
-            ? {
-                type: 'error',
-                message: finalRun.error ?? 'Agent run failed.',
-              }
-            : current.banner,
-        activeRunIdByThread: {
-          ...current.activeRunIdByThread,
-          [threadId]: null,
-        },
-        runsById: {
-          ...current.runsById,
-          [runId]: finalRun,
-        },
-        threads:
-          renamedThread !== null
-            ? sortThreads(replaceThread(current.threads, renamedThread))
-            : current.threads,
-        messagesByThread: replaceMessage(
-          current.messagesByThread,
-          threadId,
-          assistantMessageId,
-          () => finalizedMessage,
-        ),
-      }))
+      set((current) => {
+        const mergedTimeline = [...(current.timelineByThread[threadId] ?? []), ...finalRun.timeline]
+          .sort((a, b) => a.id - b.id)
+          .filter((event, index, list) => index === 0 || event.id !== list[index - 1]?.id)
+
+        return {
+          ...current,
+          sending: false,
+          streamController: null,
+          banner:
+            finalRun.status === 'failed'
+              ? {
+                  type: 'error',
+                  message: finalRun.error ?? 'Agent run failed.',
+                }
+              : current.banner,
+          activeRunIdByThread: {
+            ...current.activeRunIdByThread,
+            [threadId]: null,
+          },
+          runsById: {
+            ...current.runsById,
+            [runId]: finalRun,
+          },
+          timelineByThread: {
+            ...current.timelineByThread,
+            [threadId]: mergedTimeline,
+          },
+          threads:
+            renamedThread !== null
+              ? sortThreads(replaceThread(current.threads, renamedThread))
+              : current.threads,
+          messagesByThread: replaceMessage(
+            current.messagesByThread,
+            threadId,
+            assistantMessageId,
+            () => finalizedMessage,
+          ),
+        }
+      })
 
       await db.transaction('rw', db.messages, db.runs, db.threads, async () => {
         await db.messages.put(finalizedMessage)
@@ -686,6 +803,9 @@ export const useChatStore = create<ChatState>((set, get) => {
     activeRunIdByThread: {},
     benchmarkReport: null,
     benchmarkLoading: false,
+    runtimeHealth: 'offline',
+    runtimeHealthMessage: null,
+    runtimeReconnectAttempts: 0,
 
     initialize: async () => {
       if (get().initialized || get().initializing) {
@@ -737,6 +857,8 @@ export const useChatStore = create<ChatState>((set, get) => {
         } catch {
           // Ignore benchmark bootstrap failures in offline mode.
         }
+
+        await get().checkRuntimeHealth()
       } catch (error) {
         const message =
           error instanceof Error
@@ -758,6 +880,8 @@ export const useChatStore = create<ChatState>((set, get) => {
             type: 'error',
             message,
           },
+          runtimeHealth: 'offline',
+          runtimeHealthMessage: message,
         }))
       }
     },
@@ -883,6 +1007,10 @@ export const useChatStore = create<ChatState>((set, get) => {
       }))
 
       await persistSettings(settings)
+
+      if (mode !== 'chat') {
+        await get().checkRuntimeHealth()
+      }
     },
 
     updateProvider: async (update) => {
@@ -923,6 +1051,7 @@ export const useChatStore = create<ChatState>((set, get) => {
 
       set((current) => ({ ...current, settings }))
       await persistSettings(settings)
+      await get().checkRuntimeHealth()
     },
 
     updateRunConfig: async (update) => {
@@ -976,6 +1105,43 @@ export const useChatStore = create<ChatState>((set, get) => {
 
     clearBanner: () => {
       set((state) => ({ ...state, banner: null }))
+    },
+
+    checkRuntimeHealth: async () => {
+      const sidecarBaseUrl = get().settings.runtime.sidecarBaseUrl
+
+      try {
+        const health = await getRuntimeHealth(sidecarBaseUrl)
+
+        if (health.status === 'online') {
+          applyRuntimeHealth('online', null, 0)
+          return
+        }
+
+        if (health.status === 'degraded') {
+          applyRuntimeHealth(
+            'degraded',
+            health.message ?? 'Agent runtime is reachable but operating in degraded mode.',
+            0,
+          )
+          return
+        }
+
+        applyRuntimeHealth(
+          'offline',
+          health.message ??
+            `Cannot reach agent runtime at ${sidecarBaseUrl}. Start the sidecar with \`npm run dev:all\` or \`npm run dev:sidecar\`.`,
+          0,
+        )
+      } catch (error) {
+        applyRuntimeHealth(
+          'offline',
+          error instanceof Error
+            ? error.message
+            : `Cannot reach agent runtime at ${sidecarBaseUrl}. Start the sidecar with \`npm run dev:all\` or \`npm run dev:sidecar\`.`,
+          0,
+        )
+      }
     },
 
     sendMessage: async (prompt) => {
