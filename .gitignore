@@ -23,6 +23,7 @@ dist-ssr
 *.sln
 *.sw?
 models/
+/Qwen3.5-9B
 tmp/
 playwright-report/
 test-results/
