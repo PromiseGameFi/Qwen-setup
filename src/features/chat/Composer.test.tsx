@@ -20,6 +20,8 @@ function renderComposer(onSend = vi.fn()) {
         swarmMaxAgents: 4,
         thinkingPasses: 3,
       }}
+      runtimeHealth="online"
+      runtimeHealthMessage={null}
       sending={false}
     />,
   )
