@@ -3,19 +3,33 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { Composer } from './Composer'
 
+function renderComposer(onSend = vi.fn()) {
+  render(
+    <Composer
+      canRegenerate={false}
+      mode="chat"
+      onModeChange={vi.fn()}
+      onRegenerate={vi.fn()}
+      onRunConfigChange={vi.fn()}
+      onSend={onSend}
+      onStop={vi.fn()}
+      runConfig={{
+        maxSteps: 8,
+        maxSources: 6,
+        timeBudgetSec: 180,
+        swarmMaxAgents: 4,
+        thinkingPasses: 3,
+      }}
+      sending={false}
+    />,
+  )
+}
+
 describe('Composer', () => {
   it('submits on Enter', () => {
     const onSend = vi.fn()
 
-    render(
-      <Composer
-        canRegenerate={false}
-        onRegenerate={vi.fn()}
-        onSend={onSend}
-        onStop={vi.fn()}
-        sending={false}
-      />,
-    )
+    renderComposer(onSend)
 
     const input = screen.getByPlaceholderText('Message Qwen locally...')
     fireEvent.change(input, { target: { value: 'Hello world' } })
@@ -27,15 +41,7 @@ describe('Composer', () => {
   it('does not submit on Shift+Enter', () => {
     const onSend = vi.fn()
 
-    render(
-      <Composer
-        canRegenerate={false}
-        onRegenerate={vi.fn()}
-        onSend={onSend}
-        onStop={vi.fn()}
-        sending={false}
-      />,
-    )
+    renderComposer(onSend)
 
     const input = screen.getByPlaceholderText('Message Qwen locally...')
     fireEvent.change(input, { target: { value: 'Hello world' } })
