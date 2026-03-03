@@ -27,6 +27,40 @@ Professional local chat app for Qwen with ChatGPT/Claude-style UX, local persist
 - Runtime model used by local server: `models/Qwen3.5-9B-mlx-4bit`
 - Symlink alias created by script: `Qwen3.5-9B -> models/Qwen3.5-9B-mlx-4bit`
 
+## Environment Configuration (`.env`)
+
+All model/sidecar base URLs and API keys can be configured from `.env`.
+
+1. Create local env file:
+
+```bash
+cp .env.example .env
+```
+
+2. Edit `.env` values you need:
+
+- Frontend provider:
+  - `VITE_MODEL_BASE_URL`
+  - `VITE_MODEL_NAME`
+  - `VITE_MODEL_API_KEY`
+  - `VITE_SIDECAR_BASE_URL`
+  - `VITE_TAVILY_API_KEY`
+  - `VITE_BRAVE_API_KEY`
+- Sidecar/runtime:
+  - `MODEL_BASE_URL`
+  - `TAVILY_API_KEY`
+  - `BRAVE_API_KEY`
+- Model startup script:
+  - `HOST`, `PORT`, `MODEL_ALIAS`
+  - `HF_MODEL_REPO`, `MLX_MODEL_REPO`, `MLX_MODEL_URL` (optional)
+
+Notes:
+
+- Frontend uses `VITE_*` vars as default settings.
+- Sidecar loads `.env` on startup.
+- `start_qwen_mlx_server.sh` sources `.env` automatically.
+- `.env` is gitignored. Commit only `.env.example`.
+
 ## Quick Start (One Command)
 
 1. Install dependencies
@@ -34,6 +68,7 @@ Professional local chat app for Qwen with ChatGPT/Claude-style UX, local persist
 ```bash
 npm install
 python3 -m pip install mlx-lm
+cp .env.example .env
 ```
 
 2. Start model + sidecar + UI together
@@ -57,6 +92,27 @@ Notes:
 - First run can take longer if model download/conversion is needed.
 - `dev:all` auto-restarts sidecar with bounded backoff if it drops.
 - If model or UI exits, `dev:all` stops all services to avoid orphan listeners.
+
+## Hugging Face Space (Qwen3.5-0.8B)
+
+For a free test deployment, this repo includes a ready-to-push Docker Space template at:
+
+- `deploy/hf-space/`
+
+Setup:
+
+1. Create a new Hugging Face Space with **Docker** SDK.
+2. Copy all files from `deploy/hf-space/` into that Space repo root.
+3. In Space variables, set:
+   - `MODEL_REPO=unsloth/Qwen3.5-0.8B-GGUF`
+   - `MODEL_FILE=Qwen3.5-0.8B-Q4_K_M.gguf`
+4. Wait for build/start, then use this app's Settings:
+   - Preset: `Hugging Face Space`
+   - Base URL: `https://<your-space-name>.hf.space/v1`
+   - Model: `Qwen3.5-0.8B-Q4_K_M.gguf`
+   - API Key: optional (only if set on the Space)
+
+The Space serves OpenAI-compatible endpoints (`/v1/models`, `/v1/chat/completions`).
 
 ## Manual Fallback Startup (Three Terminals)
 
