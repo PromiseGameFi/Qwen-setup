@@ -546,7 +546,7 @@ export async function getRuntimeHealth(sidecarBaseUrl: string): Promise<RuntimeH
       return {
         status: 'offline',
         payload: null,
-        message: `Cannot reach agent runtime at ${endpoint}. Start the sidecar with \`npm run dev:all\` or \`npm run dev:sidecar\`.`,
+        message: `Cannot reach agent runtime at ${endpoint}. Start the sidecar with \`npm run dev:all\` (or \`npm run dev:all:hf\` for remote model mode), or \`npm run dev:sidecar\`.`,
       }
     }
 
@@ -626,7 +626,7 @@ function formatRuntimeNetworkError(error: unknown, endpoint: string): RuntimeTra
       endpoint,
       [
         `Cannot reach agent runtime at ${endpoint}.`,
-        'Start the stack with `npm run dev:all` (or sidecar only with `npm run dev:sidecar`), then retry.',
+        'Start the stack with `npm run dev:all` (`npm run dev:all:hf` for remote mode), or sidecar only with `npm run dev:sidecar`, then retry.',
       ].join(' '),
     )
   }
