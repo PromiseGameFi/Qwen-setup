@@ -816,9 +816,19 @@ export const useChatStore = create<ChatState>((set, get) => {
 
       try {
         const persistedSettings = await db.settings.get('app')
-        const settings = normalizeSettings(persistedSettings?.value ?? DEFAULT_SETTINGS)
+        const normalizedSettings = normalizeSettings(persistedSettings?.value ?? DEFAULT_SETTINGS)
+        const settings =
+          normalizedSettings.runtime.defaultMode === 'chat'
+            ? normalizedSettings
+            : normalizeSettings({
+                ...normalizedSettings,
+                runtime: {
+                  ...normalizedSettings.runtime,
+                  defaultMode: 'chat',
+                },
+              })
 
-        if (!persistedSettings) {
+        if (!persistedSettings || settings.runtime.defaultMode !== normalizedSettings.runtime.defaultMode) {
           await persistSettings(settings)
         }
 
@@ -991,26 +1001,24 @@ export const useChatStore = create<ChatState>((set, get) => {
     },
 
     setActiveMode: async (mode) => {
+      void mode
       const state = get()
+      const nextMode: ModeType = 'chat'
       const settings: AppSettings = normalizeSettings({
         ...state.settings,
         runtime: {
           ...state.settings.runtime,
-          defaultMode: mode,
+          defaultMode: nextMode,
         },
       })
 
       set((current) => ({
         ...current,
-        activeMode: mode,
+        activeMode: nextMode,
         settings,
       }))
 
       await persistSettings(settings)
-
-      if (mode !== 'chat') {
-        await get().checkRuntimeHealth()
-      }
     },
 
     updateProvider: async (update) => {
@@ -1418,6 +1426,17 @@ export const useChatStore = create<ChatState>((set, get) => {
 
     importChatsFromText: async (raw) => {
       const bundle = parseExportBundle(raw)
+      const normalizedSettings = normalizeSettings(bundle.settings)
+      const importedSettings =
+        normalizedSettings.runtime.defaultMode === 'chat'
+          ? normalizedSettings
+          : normalizeSettings({
+              ...normalizedSettings,
+              runtime: {
+                ...normalizedSettings.runtime,
+                defaultMode: 'chat',
+              },
+            })
 
       await db.transaction('rw', db.threads, db.messages, db.settings, db.runs, async () => {
         await db.threads.clear()
@@ -1429,7 +1448,7 @@ export const useChatStore = create<ChatState>((set, get) => {
         await db.messages.bulkPut(bundle.messages)
         await db.settings.put({
           key: 'app',
-          value: normalizeSettings(bundle.settings),
+          value: importedSettings,
         })
 
         if (bundle.runs && bundle.runs.length > 0) {
@@ -1452,8 +1471,8 @@ export const useChatStore = create<ChatState>((set, get) => {
         messagesByThread,
         runsById,
         timelineByThread,
-        settings: normalizeSettings(bundle.settings),
-        activeMode: normalizeSettings(bundle.settings).runtime.defaultMode,
+        settings: importedSettings,
+        activeMode: 'chat',
         activeThreadId: threads[0]?.id ?? null,
         banner: {
           type: 'info',
