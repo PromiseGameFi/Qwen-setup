@@ -1,9 +1,10 @@
-import type { AppSettings, ChatMessage, ChatThread, ExportBundleV1 } from '../types/chat'
+import type { AgentRunRecord, AppSettings, ChatMessage, ChatThread, ExportBundleV1 } from '../types/chat'
 
 export function createExportBundle(
   threads: ChatThread[],
   messages: ChatMessage[],
   settings: AppSettings,
+  runs: AgentRunRecord[] = [],
 ): ExportBundleV1 {
   return {
     version: 1,
@@ -11,6 +12,7 @@ export function createExportBundle(
     threads,
     messages,
     settings,
+    runs,
   }
 }
 
@@ -67,8 +69,13 @@ function validateSettings(settings: unknown): settings is AppSettings {
     return false
   }
 
+  const runtime = settings.runtime
+  const runtimeRecord = isRecord(runtime) ? runtime : null
+  const runConfig = runtimeRecord?.runConfig
+  const providerKeys = runtimeRecord?.providerKeys
+
   return (
-    settings.schemaVersion === 1 &&
+    (settings.schemaVersion === 1 || settings.schemaVersion === 2) &&
     (settings.uiDensity === 'comfortable' || settings.uiDensity === 'compact') &&
     (provider.preset === 'lmstudio' ||
       provider.preset === 'ollama' ||
@@ -78,7 +85,39 @@ function validateSettings(settings: unknown): settings is AppSettings {
     typeof provider.model === 'string' &&
     typeof provider.temperature === 'number' &&
     typeof provider.maxTokens === 'number' &&
-    provider.stream === true
+    provider.stream === true &&
+    (!runtimeRecord ||
+      (typeof runtimeRecord.sidecarBaseUrl === 'string' &&
+        (runtimeRecord.defaultMode === 'chat' ||
+          runtimeRecord.defaultMode === 'agent' ||
+          runtimeRecord.defaultMode === 'deep_think' ||
+          runtimeRecord.defaultMode === 'deep_research' ||
+          runtimeRecord.defaultMode === 'swarm') &&
+        isRecord(runConfig) &&
+        typeof runConfig.maxSteps === 'number' &&
+        typeof runConfig.maxSources === 'number' &&
+        typeof runConfig.timeBudgetSec === 'number' &&
+        typeof runConfig.swarmMaxAgents === 'number' &&
+        typeof runConfig.thinkingPasses === 'number' &&
+        isRecord(providerKeys)))
+  )
+}
+
+function validateRun(run: unknown): run is AgentRunRecord {
+  if (!isRecord(run)) {
+    return false
+  }
+
+  return (
+    typeof run.id === 'string' &&
+    typeof run.threadId === 'string' &&
+    typeof run.prompt === 'string' &&
+    typeof run.createdAt === 'string' &&
+    typeof run.updatedAt === 'string' &&
+    Array.isArray(run.citations) &&
+    isRecord(run.artifact) &&
+    isRecord(run.metrics) &&
+    Array.isArray(run.timeline)
   )
 }
 
@@ -94,6 +133,9 @@ export function parseExportBundle(raw: string): ExportBundleV1 {
   assert(parsed.threads.every(validateThread), 'One or more threads are invalid.')
   assert(parsed.messages.every(validateMessage), 'One or more messages are invalid.')
 
+  const runs = Array.isArray(parsed.runs) ? parsed.runs : []
+  assert(runs.every(validateRun), 'One or more runs are invalid.')
+
   return {
     version: 1,
     exportedAt:
@@ -101,5 +143,6 @@ export function parseExportBundle(raw: string): ExportBundleV1 {
     threads: parsed.threads,
     messages: parsed.messages,
     settings: parsed.settings,
+    runs,
   }
 }
