@@ -12,6 +12,7 @@ import {
   saveProviderKeys,
   streamRun,
 } from '../lib/api/agentRuntimeClient'
+import { buildMessagesWithAgentBrain } from '../lib/agentBrain'
 import { streamChatCompletion, type ChatCompletionMessage } from '../lib/api/openaiClient'
 import { buildTitleFromPrompt, isDefaultThreadTitle } from '../lib/chat/title'
 import { createExportBundle, parseExportBundle, serializeExportBundle } from '../lib/exportImport'
@@ -164,18 +165,6 @@ function buildNewThread(model: string): ChatThread {
   }
 }
 
-function toApiMessages(messages: ChatMessage[]): ChatCompletionMessage[] {
-  return messages
-    .filter(
-      (message) =>
-        message.role === 'system' || message.role === 'user' || message.role === 'assistant',
-    )
-    .map((message) => ({
-      role: message.role,
-      content: message.content,
-    }))
-}
-
 function buildEmptyRun(id: string, threadId: string, mode: ModeType, prompt: string): AgentRunRecord {
   const timestamp = nowIso()
   return {
@@ -273,12 +262,12 @@ export const useChatStore = create<ChatState>((set, get) => {
 
   const streamAssistantDirect = async ({
     threadId,
-    baseMessages,
+    requestMessages,
     assistantMessageId,
     titlePrompt,
   }: {
     threadId: string
-    baseMessages: ChatMessage[]
+    requestMessages: ChatCompletionMessage[]
     assistantMessageId: string
     titlePrompt?: string
   }): Promise<void> => {
@@ -300,7 +289,7 @@ export const useChatStore = create<ChatState>((set, get) => {
     try {
       await streamChatCompletion({
         config: state.settings.provider,
-        messages: toApiMessages(baseMessages),
+        messages: requestMessages,
         signal: streamController.signal,
         onDelta: (delta) => {
           set((current) => ({
@@ -455,7 +444,7 @@ export const useChatStore = create<ChatState>((set, get) => {
     if (preflightHealth.status === 'offline') {
       throw new Error(
         preflightHealth.message ??
-          `Cannot reach agent runtime at ${state.settings.runtime.sidecarBaseUrl}. Start the sidecar with \`npm run dev:all\` or \`npm run dev:sidecar\`.`,
+          `Cannot reach agent runtime at ${state.settings.runtime.sidecarBaseUrl}. Start the sidecar with \`npm run dev:all\` (\`npm run dev:all:hf\` for remote mode) or \`npm run dev:sidecar\`.`,
       )
     }
 
@@ -1138,7 +1127,7 @@ export const useChatStore = create<ChatState>((set, get) => {
         applyRuntimeHealth(
           'offline',
           health.message ??
-            `Cannot reach agent runtime at ${sidecarBaseUrl}. Start the sidecar with \`npm run dev:all\` or \`npm run dev:sidecar\`.`,
+            `Cannot reach agent runtime at ${sidecarBaseUrl}. Start the sidecar with \`npm run dev:all\` (\`npm run dev:all:hf\` for remote mode) or \`npm run dev:sidecar\`.`,
           0,
         )
       } catch (error) {
@@ -1146,7 +1135,7 @@ export const useChatStore = create<ChatState>((set, get) => {
           'offline',
           error instanceof Error
             ? error.message
-            : `Cannot reach agent runtime at ${sidecarBaseUrl}. Start the sidecar with \`npm run dev:all\` or \`npm run dev:sidecar\`.`,
+            : `Cannot reach agent runtime at ${sidecarBaseUrl}. Start the sidecar with \`npm run dev:all\` (\`npm run dev:all:hf\` for remote mode) or \`npm run dev:sidecar\`.`,
           0,
         )
       }
@@ -1202,6 +1191,9 @@ export const useChatStore = create<ChatState>((set, get) => {
 
       const nextMessages = [...existingMessages, userMessage, assistantMessage]
       const requestMessages = [...existingMessages, userMessage]
+      const userMessagesInThread = requestMessages.filter((message) => message.role === 'user')
+      const assistantMessagesInThread = existingMessages.filter((message) => message.role === 'assistant')
+      const isFirstAssistantTurn = userMessagesInThread.length === 1 && assistantMessagesInThread.length === 0
 
       set((state) => ({
         ...state,
@@ -1225,9 +1217,15 @@ export const useChatStore = create<ChatState>((set, get) => {
         existingMessages.filter((message) => message.role === 'user').length === 0
 
       if (get().activeMode === 'chat') {
+        const modelMessages = await buildMessagesWithAgentBrain({
+          messages: requestMessages,
+          threadId,
+          isFirstAssistantTurn,
+        })
+
         await streamAssistantDirect({
           threadId,
-          baseMessages: requestMessages,
+          requestMessages: modelMessages,
           assistantMessageId: assistantMessage.id,
           titlePrompt: shouldAutoTitle ? trimmedPrompt : undefined,
         })
@@ -1346,6 +1344,11 @@ export const useChatStore = create<ChatState>((set, get) => {
 
       const requestMessages = [...contextMessages]
       const nextMessages = [...contextMessages, assistantMessage]
+      const userMessagesInThread = requestMessages.filter((message) => message.role === 'user')
+      const assistantMessagesInThread = contextMessages.filter(
+        (message) => message.role === 'assistant',
+      )
+      const isFirstAssistantTurn = userMessagesInThread.length === 1 && assistantMessagesInThread.length === 0
 
       set((state) => ({
         ...state,
@@ -1358,9 +1361,15 @@ export const useChatStore = create<ChatState>((set, get) => {
       await db.messages.put(assistantMessage)
 
       if (get().activeMode === 'chat') {
+        const modelMessages = await buildMessagesWithAgentBrain({
+          messages: requestMessages,
+          threadId,
+          isFirstAssistantTurn,
+        })
+
         await streamAssistantDirect({
           threadId,
-          baseMessages: requestMessages,
+          requestMessages: modelMessages,
           assistantMessageId: assistantMessage.id,
         })
         return
