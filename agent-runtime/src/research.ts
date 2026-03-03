@@ -236,40 +236,92 @@ async function searchFallback(
     () => null,
   )
 
+  const duckResults: SearchResult[] = []
+
+  if (response?.ok) {
+    const payload = (await response.json().catch(() => null)) as
+      | {
+          RelatedTopics?: Array<{
+            FirstURL?: string
+            Text?: string
+          }>
+        }
+      | null
+
+    const topics = payload?.RelatedTopics
+    if (topics && Array.isArray(topics)) {
+      duckResults.push(
+        ...topics.flatMap((topic) => {
+          if (topic && typeof topic.FirstURL === 'string') {
+            return [
+              {
+                url: topic.FirstURL,
+                title: topic.Text?.split(' - ')[0] ?? 'DuckDuckGo Result',
+                snippet: topic.Text ?? '',
+                provider: 'fallback' as const,
+              },
+            ]
+          }
+
+          return []
+        }),
+      )
+    }
+  }
+
+  if (duckResults.length >= maxResults) {
+    return duckResults.slice(0, maxResults)
+  }
+
+  const wikiResults = await searchWikipedia(query, maxResults, signal)
+  return [...duckResults, ...wikiResults].slice(0, maxResults)
+}
+
+async function searchWikipedia(
+  query: string,
+  maxResults: number,
+  signal?: AbortSignal,
+): Promise<SearchResult[]> {
+  const endpoint = new URL('https://en.wikipedia.org/w/api.php')
+  endpoint.searchParams.set('action', 'query')
+  endpoint.searchParams.set('list', 'search')
+  endpoint.searchParams.set('srsearch', query)
+  endpoint.searchParams.set('utf8', '1')
+  endpoint.searchParams.set('format', 'json')
+
+  const response = await fetchWithTimeout(endpoint.toString(), { signal }, DEFAULT_TIMEOUT_MS).catch(
+    () => null,
+  )
+
   if (!response?.ok) {
     return []
   }
 
   const payload = (await response.json().catch(() => null)) as
     | {
-        RelatedTopics?: Array<{
-          FirstURL?: string
-          Text?: string
-        }>
+        query?: {
+          search?: Array<{
+            title?: string
+            snippet?: string
+          }>
+        }
       }
     | null
 
-  const topics = payload?.RelatedTopics
-  if (!topics || !Array.isArray(topics)) {
+  const results = payload?.query?.search
+  if (!results || !Array.isArray(results)) {
     return []
   }
 
-  return topics
-    .flatMap((topic) => {
-      if (topic && typeof topic.FirstURL === 'string') {
-        return [
-          {
-            url: topic.FirstURL,
-            title: topic.Text?.split(' - ')[0] ?? 'DuckDuckGo Result',
-            snippet: topic.Text ?? '',
-            provider: 'fallback' as const,
-          },
-        ]
-      }
-
-      return []
-    })
-    .slice(0, maxResults)
+  return results.slice(0, maxResults).map((entry) => {
+    const title = typeof entry.title === 'string' ? entry.title : 'Wikipedia'
+    return {
+      url: `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/\s+/g, '_'))}`,
+      title,
+      snippet: cleanHtml(typeof entry.snippet === 'string' ? entry.snippet : ''),
+      provider: 'fallback' as const,
+    }
+  })
 }
 
 function dedupeByUrl(results: SearchResult[]): SearchResult[] {
@@ -362,7 +414,7 @@ async function fetchAndExtract(
 
   if (!article?.textContent) {
     return {
-      title: article?.title ?? dom.window.document.title || new URL(url).hostname,
+      title: article?.title ?? (dom.window.document.title || new URL(url).hostname),
       text: dom.window.document.body?.textContent?.slice(0, 24000) ?? '',
     }
   }
@@ -460,6 +512,10 @@ function normalizeUrl(url: string): string {
   } catch {
     return ''
   }
+}
+
+function cleanHtml(input: string): string {
+  return input.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
 async function fetchWithTimeout(
