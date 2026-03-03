@@ -7,6 +7,8 @@
     "dev": "vite",
     "dev:ui": "vite",
     "dev:sidecar": "tsx agent-runtime/src/server.ts",
+    "dev:all": "tsx scripts/dev-all.ts",
+    "dev:all:health": "tsx scripts/dev-all-health.ts",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
     "lint": "eslint .",
