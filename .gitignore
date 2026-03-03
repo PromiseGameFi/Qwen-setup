@@ -28,3 +28,4 @@ tmp/
 playwright-report/
 test-results/
 .cache/
+agent-runtime/data/
