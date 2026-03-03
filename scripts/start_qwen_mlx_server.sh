@@ -8,6 +8,8 @@ MODEL_ALIAS="${MODEL_ALIAS:-Qwen3.5-9B}"
 HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-1234}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+HF_MODEL_REPO="${HF_MODEL_REPO:-Qwen/Qwen3.5-9B}"
+HF_MODEL_REVISION="${HF_MODEL_REVISION:-main}"
 
 # Auto-download options for distribution.
 # Set one of these in the environment for one-command setup on user machines.
@@ -31,6 +33,33 @@ fi
 
 is_converted_model_ready() {
   [ -f "$MLX_MODEL_PATH/config.json" ] && [ -f "$MLX_MODEL_PATH/model.safetensors" ]
+}
+
+download_base_hf_model() {
+  mkdir -p "$HF_MODEL_PATH"
+
+  if command -v hf >/dev/null 2>&1; then
+    echo "[1/3] Downloading base model from Hugging Face: $HF_MODEL_REPO@$HF_MODEL_REVISION"
+    hf download "$HF_MODEL_REPO" \
+      --repo-type model \
+      --revision "$HF_MODEL_REVISION" \
+      --local-dir "$HF_MODEL_PATH" \
+      >/dev/null
+    return 0
+  fi
+
+  if command -v huggingface-cli >/dev/null 2>&1; then
+    echo "[1/3] Downloading base model from Hugging Face: $HF_MODEL_REPO@$HF_MODEL_REVISION"
+    huggingface-cli download "$HF_MODEL_REPO" \
+      --revision "$HF_MODEL_REVISION" \
+      --local-dir "$HF_MODEL_PATH" \
+      >/dev/null
+    return 0
+  fi
+
+  echo "ERROR: Neither 'hf' nor 'huggingface-cli' is available to download models."
+  echo "Install one with: $PYTHON_BIN -m pip install huggingface_hub"
+  return 1
 }
 
 download_from_hf_repo() {
@@ -107,11 +136,18 @@ if ! is_converted_model_ready; then
     echo "[2/3] Reusing downloaded converted MLX model: $MLX_MODEL_PATH"
   else
     if [ ! -d "$HF_MODEL_PATH" ]; then
-      echo "ERROR: Downloaded HF model path not found: $HF_MODEL_PATH"
-      echo "Provide one of the following:"
-      echo "  1) Place base model at $HF_MODEL_PATH for local conversion"
-      echo "  2) Set MLX_MODEL_REPO to a preconverted model repo"
-      echo "  3) Set MLX_MODEL_URL to a preconverted model archive URL"
+      download_base_hf_model || {
+        echo "ERROR: Could not get base model at $HF_MODEL_PATH"
+        echo "Provide one of the following:"
+        echo "  1) Keep HF_MODEL_REPO reachable and run this command again"
+        echo "  2) Set MLX_MODEL_REPO to a preconverted model repo"
+        echo "  3) Set MLX_MODEL_URL to a preconverted model archive URL"
+        exit 1
+      }
+    fi
+
+    if [ ! -d "$HF_MODEL_PATH" ]; then
+      echo "ERROR: Base model path still missing after download: $HF_MODEL_PATH"
       exit 1
     fi
 

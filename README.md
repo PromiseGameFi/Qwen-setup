@@ -53,7 +53,9 @@ python3 -m pip install mlx-lm
 ```
 
 What this does:
-- Reuses `models/Qwen3.5-9B` (or converts it to `models/Qwen3.5-9B-mlx-4bit` on first run).
+- Reuses `models/Qwen3.5-9B-mlx-4bit` if it already exists.
+- Otherwise tries to auto-download a converted runtime model (if distribution env vars are set).
+- Otherwise auto-downloads base model `Qwen/Qwen3.5-9B` and converts it to `models/Qwen3.5-9B-mlx-4bit`.
 - Starts an OpenAI-compatible server at `http://127.0.0.1:1234/v1`.
 - Serves with model name `Qwen3.5-9B`.
 
@@ -114,7 +116,7 @@ MLX_MODEL_REPO="your-org/Qwen3.5-9B-mlx-4bit" MLX_MODEL_REVISION="main" ./script
 Behavior order in `start_qwen_mlx_server.sh`:
 1. Reuse local converted model if already present.
 2. Otherwise auto-download converted model (repo or URL).
-3. Otherwise fall back to local conversion from `models/Qwen3.5-9B`.
+3. Otherwise auto-download base model `Qwen/Qwen3.5-9B` and convert it locally.
 
 ## Connect to a Local Model
 
