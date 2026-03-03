@@ -31,30 +31,35 @@ interface CreateRunResponse {
 export async function createRun(request: AgentRuntimeRunRequest): Promise<CreateRunResponse> {
   const endpoint = `${normalizeBaseUrl(request.sidecarBaseUrl)}/api/runs`
 
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      threadId: request.threadId,
-      mode: request.mode,
-      prompt: request.prompt,
-      history: request.history.map((message) => ({
-        role: message.role,
-        content: message.content,
-      })),
-      modelConfig: {
-        baseUrl: request.provider.baseUrl,
-        apiKey: request.provider.apiKey,
-        model: request.provider.model,
-        temperature: request.provider.temperature,
-        maxTokens: request.provider.maxTokens,
+  let response: Response
+  try {
+    response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
       },
-      runConfig: request.runConfig,
-      providerKeys: request.providerKeys,
-    }),
-  })
+      body: JSON.stringify({
+        threadId: request.threadId,
+        mode: request.mode,
+        prompt: request.prompt,
+        history: request.history.map((message) => ({
+          role: message.role,
+          content: message.content,
+        })),
+        modelConfig: {
+          baseUrl: request.provider.baseUrl,
+          apiKey: request.provider.apiKey,
+          model: request.provider.model,
+          temperature: request.provider.temperature,
+          maxTokens: request.provider.maxTokens,
+        },
+        runConfig: request.runConfig,
+        providerKeys: request.providerKeys,
+      }),
+    })
+  } catch (error) {
+    throw formatRuntimeNetworkError(error, endpoint)
+  }
 
   if (!response.ok) {
     const body = await response.text().catch(() => '')
@@ -87,10 +92,7 @@ export async function streamRun({ runId, sidecarBaseUrl, signal, onEvent }: Stre
     if (error instanceof DOMException && error.name === 'AbortError') {
       return
     }
-
-    throw error instanceof Error
-      ? error
-      : new Error('Failed to connect to run stream endpoint.')
+    throw formatRuntimeNetworkError(error, endpoint)
   }
 
   if (!response.ok || !response.body) {
@@ -272,4 +274,25 @@ function isRunEventName(value: string): value is RunEventName {
     value === 'run.failed' ||
     value === 'run.cancelled'
   )
+}
+
+function formatRuntimeNetworkError(error: unknown, endpoint: string): Error {
+  if (error instanceof DOMException && error.name === 'AbortError') {
+    return error
+  }
+
+  if (error instanceof TypeError) {
+    return new Error(
+      [
+        `Cannot reach agent runtime at ${endpoint}.`,
+        'Start the sidecar with `npm run dev:sidecar`, then retry.',
+      ].join(' '),
+    )
+  }
+
+  if (error instanceof Error) {
+    return error
+  }
+
+  return new Error('Unknown network error while contacting agent runtime.')
 }
