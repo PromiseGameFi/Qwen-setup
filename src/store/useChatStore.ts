@@ -1,16 +1,30 @@
 import { create } from 'zustand'
 
+import {
+  cancelRun,
+  createRun,
+  getLatestBenchmark,
+  getRun,
+  runBenchmark,
+  saveProviderKeys,
+  streamRun,
+} from '../lib/api/agentRuntimeClient'
 import { streamChatCompletion, type ChatCompletionMessage } from '../lib/api/openaiClient'
-import { createExportBundle, parseExportBundle, serializeExportBundle } from '../lib/exportImport'
 import { buildTitleFromPrompt, isDefaultThreadTitle } from '../lib/chat/title'
+import { createExportBundle, parseExportBundle, serializeExportBundle } from '../lib/exportImport'
 import { db } from '../lib/storage/db'
 import { normalizeSettings } from '../lib/storage/migrations'
 import {
   DEFAULT_SETTINGS,
+  type AgentRunRecord,
   type AppSettings,
+  type BenchmarkReport,
   type ChatMessage,
   type ChatThread,
+  type ModeType,
   type ProviderConfig,
+  type RunConfig,
+  type RunTimelineEvent,
   type UiDensity,
 } from '../types/chat'
 
@@ -30,8 +44,15 @@ interface ChatState {
   settings: AppSettings
   settingsOpen: boolean
   mobileSidebarOpen: boolean
+  citationsDrawerOpen: boolean
   searchQuery: string
   banner: Banner | null
+  activeMode: ModeType
+  timelineByThread: Record<string, RunTimelineEvent[]>
+  runsById: Record<string, AgentRunRecord>
+  activeRunIdByThread: Record<string, string | null>
+  benchmarkReport: BenchmarkReport | null
+  benchmarkLoading: boolean
   initialize: () => Promise<void>
   createThread: () => Promise<void>
   setActiveThread: (threadId: string) => void
@@ -40,8 +61,13 @@ interface ChatState {
   setSearchQuery: (query: string) => void
   setSettingsOpen: (open: boolean) => void
   setMobileSidebarOpen: (open: boolean) => void
+  setCitationsDrawerOpen: (open: boolean) => void
+  setActiveMode: (mode: ModeType) => Promise<void>
   updateProvider: (update: Partial<ProviderConfig>) => Promise<void>
   updateUiDensity: (density: UiDensity) => Promise<void>
+  updateSidecarBaseUrl: (baseUrl: string) => Promise<void>
+  updateRunConfig: (update: Partial<RunConfig>) => Promise<void>
+  updateProviderKeys: (update: { tavilyApiKey?: string; braveApiKey?: string }) => Promise<void>
   clearBanner: () => void
   sendMessage: (prompt: string) => Promise<void>
   stopStreaming: () => void
@@ -49,6 +75,8 @@ interface ChatState {
   exportChats: () => Promise<string>
   importChatsFromText: (raw: string) => Promise<void>
   clearAllChats: () => Promise<void>
+  runBenchmarks: () => Promise<void>
+  refreshBenchmark: () => Promise<void>
 }
 
 function nowIso(): string {
@@ -97,6 +125,26 @@ function groupMessages(messages: ChatMessage[]): Record<string, ChatMessage[]> {
   return map
 }
 
+function groupTimeline(events: RunTimelineEvent[], runsById: Record<string, AgentRunRecord>) {
+  const map: Record<string, RunTimelineEvent[]> = {}
+
+  for (const event of events) {
+    const run = runsById[event.runId]
+    if (!run) {
+      continue
+    }
+
+    map[run.threadId] ??= []
+    map[run.threadId].push(event)
+  }
+
+  for (const threadId of Object.keys(map)) {
+    map[threadId].sort((a, b) => a.id - b.id)
+  }
+
+  return map
+}
+
 function buildNewThread(model: string): ChatThread {
   const timestamp = nowIso()
   return {
@@ -110,11 +158,37 @@ function buildNewThread(model: string): ChatThread {
 
 function toApiMessages(messages: ChatMessage[]): ChatCompletionMessage[] {
   return messages
-    .filter((message) => message.role === 'system' || message.role === 'user' || message.role === 'assistant')
+    .filter(
+      (message) =>
+        message.role === 'system' || message.role === 'user' || message.role === 'assistant',
+    )
     .map((message) => ({
       role: message.role,
       content: message.content,
     }))
+}
+
+function buildEmptyRun(id: string, threadId: string, mode: ModeType, prompt: string): AgentRunRecord {
+  const timestamp = nowIso()
+  return {
+    id,
+    threadId,
+    mode,
+    prompt,
+    status: 'running',
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    citations: [],
+    artifact: {
+      plan: [],
+      toolTrace: [],
+      evidenceTable: [],
+      agentOutputs: [],
+      finalAnswer: '',
+    },
+    metrics: {},
+    timeline: [],
+  }
 }
 
 async function persistSettings(settings: AppSettings): Promise<void> {
@@ -122,13 +196,40 @@ async function persistSettings(settings: AppSettings): Promise<void> {
 }
 
 export const useChatStore = create<ChatState>((set, get) => {
-  const streamAssistant = async ({
+  const persistCurrentRun = async (runId: string): Promise<void> => {
+    const run = get().runsById[runId]
+    if (!run) {
+      return
+    }
+
+    await db.runs.put(run)
+  }
+
+  const appendTimelineEvent = (threadId: string, event: RunTimelineEvent): void => {
+    set((state) => {
+      const nextThreadEvents = [...(state.timelineByThread[threadId] ?? []), event].sort(
+        (a, b) => a.id - b.id,
+      )
+
+      return {
+        ...state,
+        timelineByThread: {
+          ...state.timelineByThread,
+          [threadId]: nextThreadEvents,
+        },
+      }
+    })
+  }
+
+  const streamAssistantDirect = async ({
     threadId,
     baseMessages,
+    assistantMessageId,
     titlePrompt,
   }: {
     threadId: string
     baseMessages: ChatMessage[]
+    assistantMessageId: string
     titlePrompt?: string
   }): Promise<void> => {
     const state = get()
@@ -138,37 +239,13 @@ export const useChatStore = create<ChatState>((set, get) => {
     }
 
     const streamController = new AbortController()
-    const assistantMessage: ChatMessage = {
-      id: makeId(),
-      threadId,
-      role: 'assistant',
-      content: '',
-      createdAt: nowIso(),
-      status: 'streaming',
-    }
-
-    const updatedThread: ChatThread = {
-      ...activeThread,
-      updatedAt: nowIso(),
-      model: state.settings.provider.model,
-    }
 
     set((current) => ({
       ...current,
       sending: true,
       streamController,
       banner: null,
-      threads: sortThreads(replaceThread(current.threads, updatedThread)),
-      messagesByThread: {
-        ...current.messagesByThread,
-        [threadId]: [...(current.messagesByThread[threadId] ?? []), assistantMessage],
-      },
     }))
-
-    await db.transaction('rw', db.threads, db.messages, async () => {
-      await db.threads.put(updatedThread)
-      await db.messages.put(assistantMessage)
-    })
 
     try {
       await streamChatCompletion({
@@ -181,7 +258,7 @@ export const useChatStore = create<ChatState>((set, get) => {
             messagesByThread: replaceMessage(
               current.messagesByThread,
               threadId,
-              assistantMessage.id,
+              assistantMessageId,
               (message) => ({ ...message, content: message.content + delta }),
             ),
           }))
@@ -189,10 +266,10 @@ export const useChatStore = create<ChatState>((set, get) => {
           const currentAssistant =
             get()
               .messagesByThread[threadId]
-              ?.find((message) => message.id === assistantMessage.id)
+              ?.find((message) => message.id === assistantMessageId)
               ?.content ?? ''
 
-          void db.messages.update(assistantMessage.id, {
+          void db.messages.update(assistantMessageId, {
             content: currentAssistant,
           })
         },
@@ -201,23 +278,30 @@ export const useChatStore = create<ChatState>((set, get) => {
       const finalAssistant =
         get()
           .messagesByThread[threadId]
-          ?.find((message) => message.id === assistantMessage.id) ?? assistantMessage
+          ?.find((message) => message.id === assistantMessageId)
 
-      const hasContent = finalAssistant.content.trim().length > 0
-      const completeAssistant: ChatMessage = {
-        ...finalAssistant,
+      const hasContent = Boolean(finalAssistant?.content.trim())
+      const completedMessage: ChatMessage = {
+        ...(finalAssistant ?? {
+          id: assistantMessageId,
+          threadId,
+          role: 'assistant',
+          content: '',
+          createdAt: nowIso(),
+          status: 'streaming',
+        }),
         status: hasContent ? 'complete' : 'error',
         error: hasContent ? undefined : 'Model returned an empty response.',
       }
 
-      const currentThread = get().threads.find((thread) => thread.id === threadId) ?? updatedThread
+      const latestThread = get().threads.find((thread) => thread.id === threadId) ?? activeThread
       const renamedThread: ChatThread = {
-        ...currentThread,
+        ...latestThread,
         updatedAt: nowIso(),
         title:
-          titlePrompt && isDefaultThreadTitle(currentThread.title)
+          titlePrompt && isDefaultThreadTitle(latestThread.title)
             ? buildTitleFromPrompt(titlePrompt)
-            : currentThread.title,
+            : latestThread.title,
       }
 
       set((current) => ({
@@ -234,28 +318,36 @@ export const useChatStore = create<ChatState>((set, get) => {
         messagesByThread: replaceMessage(
           current.messagesByThread,
           threadId,
-          assistantMessage.id,
-          () => completeAssistant,
+          assistantMessageId,
+          () => completedMessage,
         ),
       }))
 
       await db.transaction('rw', db.threads, db.messages, async () => {
         await db.threads.put(renamedThread)
-        await db.messages.put(completeAssistant)
+        await db.messages.put(completedMessage)
       })
     } catch (error) {
       const isAbort = streamController.signal.aborted
-      const currentAssistant =
-        get()
-          .messagesByThread[threadId]
-          ?.find((message) => message.id === assistantMessage.id) ?? assistantMessage
-
-      const hasContent = currentAssistant.content.trim().length > 0
       const fallbackError =
         error instanceof Error && error.message ? error.message : 'Failed to generate response.'
 
+      const currentAssistant =
+        get()
+          .messagesByThread[threadId]
+          ?.find((message) => message.id === assistantMessageId)
+
+      const hasContent = Boolean(currentAssistant?.content.trim())
+
       const erroredAssistant: ChatMessage = {
-        ...currentAssistant,
+        ...(currentAssistant ?? {
+          id: assistantMessageId,
+          threadId,
+          role: 'assistant',
+          content: '',
+          createdAt: nowIso(),
+          status: 'streaming',
+        }),
         status: hasContent && isAbort ? 'complete' : 'error',
         error: hasContent && isAbort ? undefined : fallbackError,
       }
@@ -274,12 +366,249 @@ export const useChatStore = create<ChatState>((set, get) => {
         messagesByThread: replaceMessage(
           current.messagesByThread,
           threadId,
-          assistantMessage.id,
+          assistantMessageId,
           () => erroredAssistant,
         ),
       }))
 
       await db.messages.put(erroredAssistant)
+    }
+  }
+
+  const streamAssistantAdvanced = async ({
+    threadId,
+    prompt,
+    baseMessages,
+    assistantMessageId,
+    mode,
+    titlePrompt,
+  }: {
+    threadId: string
+    prompt: string
+    baseMessages: ChatMessage[]
+    assistantMessageId: string
+    mode: ModeType
+    titlePrompt?: string
+  }): Promise<void> => {
+    const state = get()
+    const streamController = new AbortController()
+
+    set((current) => ({
+      ...current,
+      sending: true,
+      streamController,
+      banner: null,
+    }))
+
+    const created = await createRun({
+      threadId,
+      mode,
+      prompt,
+      history: baseMessages,
+      provider: state.settings.provider,
+      runConfig: state.settings.runtime.runConfig,
+      sidecarBaseUrl: state.settings.runtime.sidecarBaseUrl,
+      providerKeys: {
+        tavilyApiKey: state.settings.runtime.providerKeys.tavilyApiKey,
+        braveApiKey: state.settings.runtime.providerKeys.braveApiKey,
+      },
+    })
+
+    const runId = created.runId
+
+    set((current) => ({
+      ...current,
+      activeRunIdByThread: {
+        ...current.activeRunIdByThread,
+        [threadId]: runId,
+      },
+      runsById: {
+        ...current.runsById,
+        [runId]: buildEmptyRun(runId, threadId, mode, prompt),
+      },
+    }))
+
+    try {
+      await streamRun({
+        runId,
+        sidecarBaseUrl: state.settings.runtime.sidecarBaseUrl,
+        signal: streamController.signal,
+        onEvent: (event) => {
+          appendTimelineEvent(threadId, event)
+
+          set((current) => {
+            const run = current.runsById[runId] ?? buildEmptyRun(runId, threadId, mode, prompt)
+            const nextRun: AgentRunRecord = {
+              ...run,
+              updatedAt: nowIso(),
+              timeline: [...run.timeline, event].sort((a, b) => a.id - b.id),
+            }
+
+            if (event.event === 'citation.added') {
+              nextRun.citations = [
+                ...nextRun.citations,
+                {
+                  sourceId: String(event.payload.sourceId ?? `S${nextRun.citations.length + 1}`),
+                  url: String(event.payload.url ?? ''),
+                  title: String(event.payload.title ?? 'Source'),
+                  snippet: String(event.payload.snippet ?? ''),
+                  claimRef: String(event.payload.claimRef ?? ''),
+                  confidence:
+                    typeof event.payload.confidence === 'number'
+                      ? event.payload.confidence
+                      : 0.5,
+                },
+              ]
+            }
+
+            if (event.event === 'run.failed') {
+              nextRun.status = 'failed'
+              nextRun.error = String(event.payload.message ?? 'Run failed.')
+            }
+
+            if (event.event === 'run.completed') {
+              nextRun.status = 'completed'
+            }
+
+            if (event.event === 'run.cancelled') {
+              nextRun.status = 'cancelled'
+            }
+
+            return {
+              ...current,
+              runsById: {
+                ...current.runsById,
+                [runId]: nextRun,
+              },
+            }
+          })
+
+          if (event.event === 'draft.delta') {
+            const delta = typeof event.payload.delta === 'string' ? event.payload.delta : ''
+            if (!delta) {
+              return
+            }
+
+            set((current) => ({
+              ...current,
+              messagesByThread: replaceMessage(
+                current.messagesByThread,
+                threadId,
+                assistantMessageId,
+                (message) => ({
+                  ...message,
+                  content: message.content + delta,
+                }),
+              ),
+            }))
+
+            const currentAssistant =
+              get()
+                .messagesByThread[threadId]
+                ?.find((message) => message.id === assistantMessageId)
+                ?.content ?? ''
+
+            void db.messages.update(assistantMessageId, {
+              content: currentAssistant,
+            })
+          }
+        },
+      })
+    } finally {
+      const runResponse = await getRun(state.settings.runtime.sidecarBaseUrl, runId)
+      const finalRun: AgentRunRecord = {
+        ...runResponse.run,
+        timeline: runResponse.events,
+      }
+
+      const currentAssistant =
+        get()
+          .messagesByThread[threadId]
+          ?.find((message) => message.id === assistantMessageId)
+
+      const finalContent = finalRun.artifact.finalAnswer || currentAssistant?.content || ''
+      const assistantStatus: ChatMessage['status'] =
+        finalRun.status === 'completed'
+          ? 'complete'
+          : finalRun.status === 'cancelled' && finalContent
+            ? 'complete'
+            : 'error'
+
+      const assistantError =
+        finalRun.status === 'failed'
+          ? finalRun.error ?? 'Agent run failed.'
+          : finalRun.status === 'cancelled'
+            ? finalContent
+              ? undefined
+              : 'Run cancelled.'
+            : undefined
+
+      const finalizedMessage: ChatMessage = {
+        ...(currentAssistant ?? {
+          id: assistantMessageId,
+          threadId,
+          role: 'assistant',
+          content: finalContent,
+          createdAt: nowIso(),
+          status: 'streaming',
+        }),
+        content: finalContent,
+        status: assistantStatus,
+        error: assistantError,
+      }
+
+      const currentThread = get().threads.find((thread) => thread.id === threadId)
+      const renamedThread = currentThread
+        ? {
+            ...currentThread,
+            updatedAt: nowIso(),
+            title:
+              titlePrompt && isDefaultThreadTitle(currentThread.title)
+                ? buildTitleFromPrompt(titlePrompt)
+                : currentThread.title,
+          }
+        : null
+
+      set((current) => ({
+        ...current,
+        sending: false,
+        streamController: null,
+        banner:
+          finalRun.status === 'failed'
+            ? {
+                type: 'error',
+                message: finalRun.error ?? 'Agent run failed.',
+              }
+            : current.banner,
+        activeRunIdByThread: {
+          ...current.activeRunIdByThread,
+          [threadId]: null,
+        },
+        runsById: {
+          ...current.runsById,
+          [runId]: finalRun,
+        },
+        threads:
+          renamedThread !== null
+            ? sortThreads(replaceThread(current.threads, renamedThread))
+            : current.threads,
+        messagesByThread: replaceMessage(
+          current.messagesByThread,
+          threadId,
+          assistantMessageId,
+          () => finalizedMessage,
+        ),
+      }))
+
+      await db.transaction('rw', db.messages, db.runs, db.threads, async () => {
+        await db.messages.put(finalizedMessage)
+        await db.runs.put(finalRun)
+        if (renamedThread) {
+          await db.threads.put(renamedThread)
+        }
+      })
+
+      await persistCurrentRun(runId)
     }
   }
 
@@ -294,8 +623,15 @@ export const useChatStore = create<ChatState>((set, get) => {
     settings: DEFAULT_SETTINGS,
     settingsOpen: false,
     mobileSidebarOpen: false,
+    citationsDrawerOpen: false,
     searchQuery: '',
     banner: null,
+    activeMode: DEFAULT_SETTINGS.runtime.defaultMode,
+    timelineByThread: {},
+    runsById: {},
+    activeRunIdByThread: {},
+    benchmarkReport: null,
+    benchmarkLoading: false,
 
     initialize: async () => {
       if (get().initialized || get().initializing) {
@@ -321,17 +657,32 @@ export const useChatStore = create<ChatState>((set, get) => {
         }
 
         const messages = await db.messages.toArray()
+        const runs = await db.runs.toArray()
+        const runsById = Object.fromEntries(runs.map((run) => [run.id, run]))
+        const timelineEvents = runs.flatMap((run) => run.timeline)
 
         set((state) => ({
           ...state,
           initialized: true,
           initializing: false,
           settings,
+          activeMode: settings.runtime.defaultMode,
           threads,
           messagesByThread: groupMessages(messages),
           activeThreadId: threads[0]?.id ?? null,
+          runsById,
+          timelineByThread: groupTimeline(timelineEvents, runsById),
           banner: null,
         }))
+
+        try {
+          const latest = await getLatestBenchmark(settings.runtime.sidecarBaseUrl)
+          if (latest) {
+            set((state) => ({ ...state, benchmarkReport: latest }))
+          }
+        } catch {
+          // Ignore benchmark bootstrap failures in offline mode.
+        }
       } catch (error) {
         const message =
           error instanceof Error
@@ -344,6 +695,8 @@ export const useChatStore = create<ChatState>((set, get) => {
           ...state,
           initialized: true,
           initializing: false,
+          settings: DEFAULT_SETTINGS,
+          activeMode: DEFAULT_SETTINGS.runtime.defaultMode,
           threads: [fallbackThread],
           activeThreadId: fallbackThread.id,
           messagesByThread: {},
@@ -408,6 +761,18 @@ export const useChatStore = create<ChatState>((set, get) => {
       const nextMessagesByThread = { ...state.messagesByThread }
       delete nextMessagesByThread[threadId]
 
+      const nextTimeline = { ...state.timelineByThread }
+      delete nextTimeline[threadId]
+
+      const runIdsToDelete = Object.values(state.runsById)
+        .filter((run) => run.threadId === threadId)
+        .map((run) => run.id)
+
+      const nextRunsById = { ...state.runsById }
+      for (const runId of runIdsToDelete) {
+        delete nextRunsById[runId]
+      }
+
       const nextActive =
         state.activeThreadId === threadId ? (nextThreads[0]?.id ?? null) : state.activeThreadId
 
@@ -416,11 +781,14 @@ export const useChatStore = create<ChatState>((set, get) => {
         threads: nextThreads,
         messagesByThread: nextMessagesByThread,
         activeThreadId: nextActive,
+        timelineByThread: nextTimeline,
+        runsById: nextRunsById,
       }))
 
-      await db.transaction('rw', db.threads, db.messages, async () => {
+      await db.transaction('rw', db.threads, db.messages, db.runs, async () => {
         await db.threads.delete(threadId)
         await db.messages.where('threadId').equals(threadId).delete()
+        await db.runs.where('threadId').equals(threadId).delete()
       })
 
       if (nextThreads.length === 0) {
@@ -440,6 +808,29 @@ export const useChatStore = create<ChatState>((set, get) => {
       set((state) => ({ ...state, mobileSidebarOpen: open }))
     },
 
+    setCitationsDrawerOpen: (open) => {
+      set((state) => ({ ...state, citationsDrawerOpen: open }))
+    },
+
+    setActiveMode: async (mode) => {
+      const state = get()
+      const settings: AppSettings = normalizeSettings({
+        ...state.settings,
+        runtime: {
+          ...state.settings.runtime,
+          defaultMode: mode,
+        },
+      })
+
+      set((current) => ({
+        ...current,
+        activeMode: mode,
+        settings,
+      }))
+
+      await persistSettings(settings)
+    },
+
     updateProvider: async (update) => {
       const state = get()
       const settings: AppSettings = normalizeSettings({
@@ -457,13 +848,76 @@ export const useChatStore = create<ChatState>((set, get) => {
 
     updateUiDensity: async (density) => {
       const state = get()
-      const settings: AppSettings = {
+      const settings: AppSettings = normalizeSettings({
         ...state.settings,
         uiDensity: density,
-      }
+      })
 
       set((current) => ({ ...current, settings }))
       await persistSettings(settings)
+    },
+
+    updateSidecarBaseUrl: async (baseUrl) => {
+      const state = get()
+      const settings = normalizeSettings({
+        ...state.settings,
+        runtime: {
+          ...state.settings.runtime,
+          sidecarBaseUrl: baseUrl,
+        },
+      })
+
+      set((current) => ({ ...current, settings }))
+      await persistSettings(settings)
+    },
+
+    updateRunConfig: async (update) => {
+      const state = get()
+      const settings = normalizeSettings({
+        ...state.settings,
+        runtime: {
+          ...state.settings.runtime,
+          runConfig: {
+            ...state.settings.runtime.runConfig,
+            ...update,
+          },
+        },
+      })
+
+      set((current) => ({ ...current, settings }))
+      await persistSettings(settings)
+    },
+
+    updateProviderKeys: async (update) => {
+      const state = get()
+      const settings = normalizeSettings({
+        ...state.settings,
+        runtime: {
+          ...state.settings.runtime,
+          providerKeys: {
+            ...state.settings.runtime.providerKeys,
+            ...update,
+          },
+        },
+      })
+
+      set((current) => ({ ...current, settings }))
+      await persistSettings(settings)
+
+      try {
+        await saveProviderKeys(settings.runtime.sidecarBaseUrl, settings.runtime.providerKeys)
+      } catch (error) {
+        set((current) => ({
+          ...current,
+          banner: {
+            type: 'error',
+            message:
+              error instanceof Error
+                ? error.message
+                : 'Failed to store provider keys in sidecar runtime.',
+          },
+        }))
+      }
     },
 
     clearBanner: () => {
@@ -503,13 +957,23 @@ export const useChatStore = create<ChatState>((set, get) => {
         status: 'complete',
       }
 
+      const assistantMessage: ChatMessage = {
+        id: makeId(),
+        threadId,
+        role: 'assistant',
+        content: '',
+        createdAt: nowIso(),
+        status: 'streaming',
+      }
+
       const updatedThread: ChatThread = {
         ...baseThread,
         updatedAt: nowIso(),
         model: currentState.settings.provider.model,
       }
 
-      const nextMessages = [...existingMessages, userMessage]
+      const nextMessages = [...existingMessages, userMessage, assistantMessage]
+      const requestMessages = [...existingMessages, userMessage]
 
       set((state) => ({
         ...state,
@@ -525,21 +989,75 @@ export const useChatStore = create<ChatState>((set, get) => {
       await db.transaction('rw', db.threads, db.messages, async () => {
         await db.threads.put(updatedThread)
         await db.messages.put(userMessage)
+        await db.messages.put(assistantMessage)
       })
 
       const shouldAutoTitle =
         isDefaultThreadTitle(updatedThread.title) &&
         existingMessages.filter((message) => message.role === 'user').length === 0
 
-      await streamAssistant({
-        threadId,
-        baseMessages: nextMessages,
-        titlePrompt: shouldAutoTitle ? trimmedPrompt : undefined,
-      })
+      if (get().activeMode === 'chat') {
+        await streamAssistantDirect({
+          threadId,
+          baseMessages: requestMessages,
+          assistantMessageId: assistantMessage.id,
+          titlePrompt: shouldAutoTitle ? trimmedPrompt : undefined,
+        })
+        return
+      }
+
+      try {
+        await streamAssistantAdvanced({
+          threadId,
+          prompt: trimmedPrompt,
+          baseMessages: requestMessages,
+          assistantMessageId: assistantMessage.id,
+          mode: get().activeMode,
+          titlePrompt: shouldAutoTitle ? trimmedPrompt : undefined,
+        })
+      } catch (error) {
+        const fallbackMessage =
+          error instanceof Error && error.message
+            ? error.message
+            : 'Advanced run failed before completion.'
+
+        set((state) => ({
+          ...state,
+          sending: false,
+          streamController: null,
+          banner: {
+            type: 'error',
+            message: fallbackMessage,
+          },
+          messagesByThread: replaceMessage(
+            state.messagesByThread,
+            threadId,
+            assistantMessage.id,
+            (message) => ({
+              ...message,
+              status: 'error',
+              error: fallbackMessage,
+            }),
+          ),
+        }))
+
+        await db.messages.update(assistantMessage.id, {
+          status: 'error',
+          error: fallbackMessage,
+        })
+      }
     },
 
     stopStreaming: () => {
-      const controller = get().streamController
+      const state = get()
+      const controller = state.streamController
+      const activeThreadId = state.activeThreadId
+      const runId = activeThreadId ? state.activeRunIdByThread[activeThreadId] : null
+
+      if (runId && activeThreadId) {
+        void cancelRun(state.settings.runtime.sidecarBaseUrl, runId)
+      }
+
       if (controller) {
         controller.abort()
       }
@@ -589,15 +1107,82 @@ export const useChatStore = create<ChatState>((set, get) => {
         return
       }
 
-      await streamAssistant({
+      const assistantMessage: ChatMessage = {
+        id: makeId(),
         threadId,
-        baseMessages: contextMessages,
-      })
+        role: 'assistant',
+        content: '',
+        createdAt: nowIso(),
+        status: 'streaming',
+      }
+
+      const requestMessages = [...contextMessages]
+      const nextMessages = [...contextMessages, assistantMessage]
+
+      set((state) => ({
+        ...state,
+        messagesByThread: {
+          ...state.messagesByThread,
+          [threadId]: nextMessages,
+        },
+      }))
+
+      await db.messages.put(assistantMessage)
+
+      if (get().activeMode === 'chat') {
+        await streamAssistantDirect({
+          threadId,
+          baseMessages: requestMessages,
+          assistantMessageId: assistantMessage.id,
+        })
+        return
+      }
+
+      try {
+        await streamAssistantAdvanced({
+          threadId,
+          prompt: latestUser.content,
+          baseMessages: requestMessages,
+          assistantMessageId: assistantMessage.id,
+          mode: get().activeMode,
+        })
+      } catch (error) {
+        const message =
+          error instanceof Error && error.message
+            ? error.message
+            : 'Failed to regenerate response in advanced mode.'
+
+        set((state) => ({
+          ...state,
+          sending: false,
+          streamController: null,
+          banner: {
+            type: 'error',
+            message,
+          },
+          messagesByThread: replaceMessage(
+            state.messagesByThread,
+            threadId,
+            assistantMessage.id,
+            (entry) => ({
+              ...entry,
+              status: 'error',
+              error: message,
+            }),
+          ),
+        }))
+
+        await db.messages.update(assistantMessage.id, {
+          status: 'error',
+          error: message,
+        })
+      }
     },
 
     exportChats: async () => {
       const threads = await db.threads.toArray()
       const messages = await db.messages.toArray()
+      const runs = await db.runs.toArray()
       const settingsRecord = await db.settings.get('app')
       const settings = normalizeSettings(settingsRecord?.value ?? get().settings)
 
@@ -605,6 +1190,7 @@ export const useChatStore = create<ChatState>((set, get) => {
         sortThreads(threads),
         messages.sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
         settings,
+        runs,
       )
 
       return serializeExportBundle(bundle)
@@ -613,10 +1199,11 @@ export const useChatStore = create<ChatState>((set, get) => {
     importChatsFromText: async (raw) => {
       const bundle = parseExportBundle(raw)
 
-      await db.transaction('rw', db.threads, db.messages, db.settings, async () => {
+      await db.transaction('rw', db.threads, db.messages, db.settings, db.runs, async () => {
         await db.threads.clear()
         await db.messages.clear()
         await db.settings.clear()
+        await db.runs.clear()
 
         await db.threads.bulkPut(bundle.threads)
         await db.messages.bulkPut(bundle.messages)
@@ -624,16 +1211,29 @@ export const useChatStore = create<ChatState>((set, get) => {
           key: 'app',
           value: normalizeSettings(bundle.settings),
         })
+
+        if (bundle.runs && bundle.runs.length > 0) {
+          await db.runs.bulkPut(bundle.runs)
+        }
       })
 
       const threads = sortThreads(bundle.threads)
       const messagesByThread = groupMessages(bundle.messages)
+      const runs = bundle.runs ?? []
+      const runsById = Object.fromEntries(runs.map((run) => [run.id, run]))
+      const timelineByThread = groupTimeline(
+        runs.flatMap((run) => run.timeline),
+        runsById,
+      )
 
       set((state) => ({
         ...state,
         threads,
         messagesByThread,
+        runsById,
+        timelineByThread,
         settings: normalizeSettings(bundle.settings),
+        activeMode: normalizeSettings(bundle.settings).runtime.defaultMode,
         activeThreadId: threads[0]?.id ?? null,
         banner: {
           type: 'info',
@@ -648,9 +1248,10 @@ export const useChatStore = create<ChatState>((set, get) => {
 
     clearAllChats: async () => {
       const settings = get().settings
-      await db.transaction('rw', db.threads, db.messages, async () => {
+      await db.transaction('rw', db.threads, db.messages, db.runs, async () => {
         await db.threads.clear()
         await db.messages.clear()
+        await db.runs.clear()
       })
 
       const newThread = buildNewThread(settings.provider.model)
@@ -662,12 +1263,73 @@ export const useChatStore = create<ChatState>((set, get) => {
         messagesByThread: {
           [newThread.id]: [],
         },
+        runsById: {},
+        timelineByThread: {},
         activeThreadId: newThread.id,
         banner: {
           type: 'info',
           message: 'All chats cleared.',
         },
       }))
+    },
+
+    runBenchmarks: async () => {
+      const state = get()
+      set((current) => ({ ...current, benchmarkLoading: true }))
+
+      try {
+        const report = await runBenchmark(state.settings.runtime.sidecarBaseUrl)
+        set((current) => ({
+          ...current,
+          benchmarkReport: report,
+          benchmarkLoading: false,
+          banner: {
+            type: report.gatePassed ? 'info' : 'error',
+            message: report.gatePassed
+              ? 'Benchmark gate passed.'
+              : 'Benchmark gate failed. Review per-mode metrics in settings.',
+          },
+        }))
+      } catch (error) {
+        set((current) => ({
+          ...current,
+          benchmarkLoading: false,
+          banner: {
+            type: 'error',
+            message:
+              error instanceof Error
+                ? error.message
+                : 'Failed to run benchmark suite against sidecar runtime.',
+          },
+        }))
+      }
+    },
+
+    refreshBenchmark: async () => {
+      const sidecarBaseUrl = get().settings.runtime.sidecarBaseUrl
+      set((state) => ({ ...state, benchmarkLoading: true }))
+
+      try {
+        const report = await getLatestBenchmark(sidecarBaseUrl)
+
+        set((state) => ({
+          ...state,
+          benchmarkLoading: false,
+          benchmarkReport: report,
+        }))
+      } catch (error) {
+        set((state) => ({
+          ...state,
+          benchmarkLoading: false,
+          banner: {
+            type: 'error',
+            message:
+              error instanceof Error
+                ? error.message
+                : 'Failed to load latest benchmark report.',
+          },
+        }))
+      }
     },
   }
 })
