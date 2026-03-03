@@ -21,7 +21,7 @@ describe('Composer', () => {
 
     renderComposer(onSend)
 
-    const input = screen.getByPlaceholderText('Message Qwen locally...')
+    const input = screen.getByPlaceholderText('Message Qwen...')
     fireEvent.change(input, { target: { value: 'Hello world' } })
     fireEvent.keyDown(input, { key: 'Enter' })
 
@@ -33,7 +33,7 @@ describe('Composer', () => {
 
     renderComposer(onSend)
 
-    const input = screen.getByPlaceholderText('Message Qwen locally...')
+    const input = screen.getByPlaceholderText('Message Qwen...')
     fireEvent.change(input, { target: { value: 'Hello world' } })
     fireEvent.keyDown(input, { key: 'Enter', shiftKey: true })
 
