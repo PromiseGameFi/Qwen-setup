@@ -1,0 +1,77 @@
+:root {
+  --font-ui: 'Instrument Sans', 'Segoe UI', sans-serif;
+  --font-serif: 'Newsreader', Georgia, serif;
+
+  --bg-canvas: #f4efe6;
+  --bg-layer: #efe5d8;
+  --surface-soft: #fff9f1;
+  --surface-muted: #f8f0e4;
+  --surface-stroke: #e7ddcf;
+
+  --sidebar-bg: #1c1b18;
+  --sidebar-text: #f8f2ea;
+
+  --text-primary: #231f17;
+  --text-muted: #6b614f;
+  --text-dim: #8e846f;
+
+  --accent-soft: #ede0ce;
+  --accent-strong: #8f5c35;
+  --accent-text: #392714;
+}
+
+.app-frame {
+  background:
+    radial-gradient(120rem 60rem at 80% -15%, rgb(214 186 154 / 45%), transparent 60%),
+    radial-gradient(80rem 40rem at -10% 100%, rgb(202 179 145 / 32%), transparent 60%),
+    linear-gradient(180deg, var(--bg-canvas), var(--bg-layer));
+}
+
+.font-serif {
+  font-family: var(--font-serif);
+}
+
+.message-enter {
+  animation: message-enter 260ms ease-out;
+}
+
+.streaming-caret {
+  display: inline-block;
+  width: 0.55ch;
+  margin-left: 0.1ch;
+  vertical-align: text-bottom;
+  background-color: var(--accent-strong);
+  animation: stream-pulse 1s steps(2, start) infinite;
+}
+
+@keyframes message-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes stream-pulse {
+  0%,
+  49% {
+    opacity: 1;
+  }
+
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.density-compact .message-enter {
+  padding: 0.8rem;
+}
+
+.density-compact .prose {
+  font-size: 0.92rem;
+}
