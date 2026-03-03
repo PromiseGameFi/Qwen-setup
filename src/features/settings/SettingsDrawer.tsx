@@ -1,10 +1,11 @@
 import { useRef, useState } from 'react'
 import clsx from 'clsx'
-import { Download, SlidersHorizontal, Trash2, Upload, X } from 'lucide-react'
+import { Download, Gauge, SlidersHorizontal, Trash2, Upload, X } from 'lucide-react'
 
 import {
   PROVIDER_PRESETS,
   type AppSettings,
+  type BenchmarkReport,
   type ProviderConfig,
   type ProviderPreset,
   type UiDensity,
@@ -13,9 +14,15 @@ import {
 interface SettingsDrawerProps {
   open: boolean
   settings: AppSettings
+  benchmarkReport: BenchmarkReport | null
+  benchmarkLoading: boolean
   onClose: () => void
   onProviderChange: (update: Partial<ProviderConfig>) => Promise<void>
+  onProviderKeysChange: (update: { tavilyApiKey?: string; braveApiKey?: string }) => Promise<void>
   onDensityChange: (density: UiDensity) => Promise<void>
+  onSidecarBaseUrlChange: (baseUrl: string) => Promise<void>
+  onRunBenchmarks: () => Promise<void>
+  onRefreshBenchmark: () => Promise<void>
   onExport: () => Promise<void>
   onImport: (file: File) => Promise<void>
   onClearAll: () => Promise<void>
@@ -24,9 +31,15 @@ interface SettingsDrawerProps {
 export function SettingsDrawer({
   open,
   settings,
+  benchmarkReport,
+  benchmarkLoading,
   onClose,
   onProviderChange,
+  onProviderKeysChange,
   onDensityChange,
+  onSidecarBaseUrlChange,
+  onRunBenchmarks,
+  onRefreshBenchmark,
   onExport,
   onImport,
   onClearAll,
@@ -67,7 +80,7 @@ export function SettingsDrawer({
           <div>
             <p className="font-serif text-2xl text-[var(--text-primary)]">Settings</p>
             <p className="mt-1 text-sm text-[var(--text-muted)]">
-              Configure your local OpenAI-compatible endpoint.
+              Configure local model + sidecar orchestration.
             </p>
           </div>
           <button
@@ -190,6 +203,96 @@ export function SettingsDrawer({
               <option value="compact">Compact</option>
             </select>
           </label>
+        </section>
+
+        <section className="mt-5 space-y-4 rounded-2xl border border-[var(--surface-stroke)] bg-white p-4">
+          <p className="font-medium text-[var(--text-primary)]">Agent Runtime</p>
+
+          <label className="block text-sm text-[var(--text-muted)]">
+            Sidecar Base URL
+            <input
+              className="mt-1 w-full rounded-lg border border-[var(--surface-stroke)] bg-[var(--surface-soft)] px-3 py-2 text-[var(--text-primary)] outline-none"
+              onChange={(event) => {
+                void onSidecarBaseUrlChange(event.target.value)
+              }}
+              placeholder="http://127.0.0.1:8787"
+              value={settings.runtime.sidecarBaseUrl}
+            />
+          </label>
+
+          <label className="block text-sm text-[var(--text-muted)]">
+            Tavily API Key (optional)
+            <input
+              className="mt-1 w-full rounded-lg border border-[var(--surface-stroke)] bg-[var(--surface-soft)] px-3 py-2 text-[var(--text-primary)] outline-none"
+              onChange={(event) => {
+                void onProviderKeysChange({ tavilyApiKey: event.target.value })
+              }}
+              placeholder="tvly-..."
+              value={settings.runtime.providerKeys.tavilyApiKey ?? ''}
+            />
+          </label>
+
+          <label className="block text-sm text-[var(--text-muted)]">
+            Brave API Key (optional)
+            <input
+              className="mt-1 w-full rounded-lg border border-[var(--surface-stroke)] bg-[var(--surface-soft)] px-3 py-2 text-[var(--text-primary)] outline-none"
+              onChange={(event) => {
+                void onProviderKeysChange({ braveApiKey: event.target.value })
+              }}
+              placeholder="brv-..."
+              value={settings.runtime.providerKeys.braveApiKey ?? ''}
+            />
+          </label>
+        </section>
+
+        <section className="mt-5 space-y-3 rounded-2xl border border-[var(--surface-stroke)] bg-white p-4">
+          <div className="flex items-center gap-2">
+            <Gauge size={15} className="text-[var(--text-muted)]" />
+            <p className="font-medium text-[var(--text-primary)]">Benchmark Gate</p>
+          </div>
+
+          <div className="rounded-lg border border-[var(--surface-stroke)] bg-[var(--surface-soft)] px-3 py-2 text-xs text-[var(--text-muted)]">
+            {benchmarkReport ? (
+              <>
+                <p>
+                  Latest: {new Date(benchmarkReport.generatedAt).toLocaleString()} -{' '}
+                  <strong className={benchmarkReport.gatePassed ? 'text-green-700' : 'text-red-700'}>
+                    {benchmarkReport.gatePassed ? 'PASS' : 'FAIL'}
+                  </strong>
+                </p>
+                <p className="mt-1">
+                  Agent {Math.round((benchmarkReport.modes.agent.metrics.taskSuccessRate ?? 0) * 100)}% |
+                  Deep Research {Math.round((benchmarkReport.modes.deepResearch.metrics.citationCoverage ?? 0) * 100)}% coverage
+                </p>
+              </>
+            ) : (
+              <p>No benchmark report available yet.</p>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              className="inline-flex items-center justify-center rounded-lg border border-[var(--surface-stroke)] px-3 py-2 text-sm text-[var(--text-primary)] transition hover:bg-[var(--surface-soft)] disabled:opacity-50"
+              disabled={benchmarkLoading}
+              onClick={() => {
+                void onRefreshBenchmark()
+              }}
+              type="button"
+            >
+              Refresh
+            </button>
+
+            <button
+              className="inline-flex items-center justify-center rounded-lg bg-[var(--accent-strong)] px-3 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+              disabled={benchmarkLoading}
+              onClick={() => {
+                void onRunBenchmarks()
+              }}
+              type="button"
+            >
+              {benchmarkLoading ? 'Running...' : 'Run Benchmark'}
+            </button>
+          </div>
         </section>
 
         <section className="mt-5 space-y-3 rounded-2xl border border-[var(--surface-stroke)] bg-white p-4">
