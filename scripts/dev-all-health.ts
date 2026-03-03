@@ -5,11 +5,33 @@ interface EndpointCheck {
   url: string
 }
 
-const checks: EndpointCheck[] = [
-  { name: 'Model', url: 'http://127.0.0.1:1234/v1/models' },
-  { name: 'Sidecar', url: 'http://127.0.0.1:8787/api/health' },
-  { name: 'UI', url: 'http://127.0.0.1:5173' },
-]
+type DevAllMode = 'local' | 'hf'
+
+function parseMode(): DevAllMode {
+  const cliMode = process.argv.find((argument) => argument.startsWith('--mode='))?.split('=')[1]
+  const envMode = process.env.DEV_ALL_MODE
+  const resolved = cliMode ?? envMode
+  return resolved === 'hf' ? 'hf' : 'local'
+}
+
+function normalizeBaseUrl(raw: string): string {
+  return raw.trim().replace(/\/+$/, '')
+}
+
+function buildChecks(mode: DevAllMode): EndpointCheck[] {
+  const modelBaseUrl = normalizeBaseUrl(
+    process.env.MODEL_BASE_URL ?? process.env.VITE_MODEL_BASE_URL ?? 'http://127.0.0.1:1234/v1',
+  )
+
+  return [
+    {
+      name: mode === 'hf' ? 'Remote Model' : 'Local Model',
+      url: `${modelBaseUrl}/models`,
+    },
+    { name: 'Sidecar', url: 'http://127.0.0.1:8787/api/health' },
+    { name: 'UI', url: 'http://127.0.0.1:5173' },
+  ]
+}
 
 async function ping(url: string): Promise<{ ok: boolean; status?: number; error?: string }> {
   const controller = new AbortController()
@@ -39,6 +61,8 @@ async function ping(url: string): Promise<{ ok: boolean; status?: number; error?
 }
 
 async function main(): Promise<void> {
+  const mode = parseMode()
+  const checks = buildChecks(mode)
   let allHealthy = true
 
   for (const check of checks) {
@@ -62,8 +86,9 @@ async function main(): Promise<void> {
   }
 
   if (!allHealthy) {
+    const startCommand = mode === 'hf' ? 'npm run dev:all:hf' : 'npm run dev:all'
     process.stdout.write(
-      '[health] one or more services are unavailable. Start everything with: npm run dev:all\n',
+      `[health] one or more services are unavailable. Start everything with: ${startCommand}\n`,
     )
     process.exit(1)
   }
