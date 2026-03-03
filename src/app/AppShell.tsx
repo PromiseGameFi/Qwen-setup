@@ -1,10 +1,13 @@
 import { useEffect, useMemo } from 'react'
-import { Menu, Settings2, X } from 'lucide-react'
+import { BookOpenText, Menu, Settings2, X } from 'lucide-react'
 
+import { CitationsDrawer } from '../features/chat/CitationsDrawer'
 import { Composer } from '../features/chat/Composer'
 import { MessageList } from '../features/chat/MessageList'
+import { RunTimeline } from '../features/chat/RunTimeline'
 import { ThreadSidebar } from '../features/chat/ThreadSidebar'
 import { SettingsDrawer } from '../features/settings/SettingsDrawer'
+import { MODE_LABELS } from '../types/chat'
 import { useChatStore } from '../store/useChatStore'
 
 export function AppShell() {
@@ -18,8 +21,15 @@ export function AppShell() {
     settings,
     settingsOpen,
     mobileSidebarOpen,
+    citationsDrawerOpen,
     searchQuery,
     banner,
+    activeMode,
+    timelineByThread,
+    runsById,
+    activeRunIdByThread,
+    benchmarkReport,
+    benchmarkLoading,
     initialize,
     createThread,
     setActiveThread,
@@ -28,8 +38,13 @@ export function AppShell() {
     setSearchQuery,
     setSettingsOpen,
     setMobileSidebarOpen,
+    setCitationsDrawerOpen,
+    setActiveMode,
     updateProvider,
     updateUiDensity,
+    updateSidecarBaseUrl,
+    updateRunConfig,
+    updateProviderKeys,
     clearBanner,
     sendMessage,
     stopStreaming,
@@ -37,6 +52,8 @@ export function AppShell() {
     exportChats,
     importChatsFromText,
     clearAllChats,
+    runBenchmarks,
+    refreshBenchmark,
   } = useChatStore()
 
   const activeMessages = useMemo(() => {
@@ -51,6 +68,31 @@ export function AppShell() {
     () => threads.find((thread) => thread.id === activeThreadId) ?? null,
     [activeThreadId, threads],
   )
+
+  const activeTimeline = useMemo(() => {
+    if (!activeThreadId) {
+      return []
+    }
+
+    return timelineByThread[activeThreadId] ?? []
+  }, [activeThreadId, timelineByThread])
+
+  const activeRun = useMemo(() => {
+    if (!activeThreadId) {
+      return null
+    }
+
+    const preferredRunId = activeRunIdByThread[activeThreadId]
+    if (preferredRunId && runsById[preferredRunId]) {
+      return runsById[preferredRunId]
+    }
+
+    const candidates = Object.values(runsById)
+      .filter((run) => run.threadId === activeThreadId)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+
+    return candidates[0] ?? null
+  }, [activeRunIdByThread, activeThreadId, runsById])
 
   const canRegenerate = useMemo(
     () => activeMessages.some((message) => message.role === 'user'),
@@ -67,6 +109,7 @@ export function AppShell() {
         if (event.key === 'Escape') {
           setSettingsOpen(false)
           setMobileSidebarOpen(false)
+          setCitationsDrawerOpen(false)
         }
         return
       }
@@ -84,7 +127,7 @@ export function AppShell() {
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [createThread, setMobileSidebarOpen, setSettingsOpen])
+  }, [createThread, setCitationsDrawerOpen, setMobileSidebarOpen, setSettingsOpen])
 
   const handleExport = async (): Promise<void> => {
     const payload = await exportChats()
@@ -140,7 +183,7 @@ export function AppShell() {
                 {activeThread?.title ?? 'Qwen Workspace'}
               </p>
               <p className="text-xs text-[var(--text-dim)]">
-                {settings.provider.model} @ {settings.provider.baseUrl}
+                {MODE_LABELS[activeMode]} - {settings.provider.model} @ {settings.provider.baseUrl}
               </p>
             </div>
           </div>
@@ -159,6 +202,16 @@ export function AppShell() {
                 </button>
               </div>
             ) : null}
+
+            <button
+              className="inline-flex items-center gap-2 rounded-lg border border-[var(--surface-stroke)] bg-[var(--surface-soft)] px-3 py-2 text-sm text-[var(--text-muted)] transition hover:text-[var(--text-primary)]"
+              disabled={!activeRun || activeRun.citations.length === 0}
+              onClick={() => setCitationsDrawerOpen(true)}
+              type="button"
+            >
+              <BookOpenText size={15} />
+              Citations
+            </button>
 
             <button
               className="inline-flex items-center gap-2 rounded-lg border border-[var(--surface-stroke)] bg-[var(--surface-soft)] px-3 py-2 text-sm text-[var(--text-muted)] transition hover:text-[var(--text-primary)]"
@@ -185,6 +238,10 @@ export function AppShell() {
               </div>
             ) : null}
 
+            {activeMode !== 'chat' ? (
+              <RunTimeline events={activeTimeline} running={sending} />
+            ) : null}
+
             <MessageList
               messages={activeMessages}
               onRegenerate={() => {
@@ -196,13 +253,21 @@ export function AppShell() {
             <Composer
               canRegenerate={canRegenerate}
               disabled={!initialized}
+              mode={activeMode}
+              onModeChange={(mode) => {
+                void setActiveMode(mode)
+              }}
               onRegenerate={() => {
                 void regenerateLastResponse()
+              }}
+              onRunConfigChange={(update) => {
+                void updateRunConfig(update)
               }}
               onSend={(prompt) => {
                 void sendMessage(prompt)
               }}
               onStop={stopStreaming}
+              runConfig={settings.runtime.runConfig}
               sending={sending}
             />
           </>
@@ -210,14 +275,26 @@ export function AppShell() {
       </main>
 
       <SettingsDrawer
+        benchmarkLoading={benchmarkLoading}
+        benchmarkReport={benchmarkReport}
         onClearAll={() => clearAllChats()}
         onClose={() => setSettingsOpen(false)}
         onDensityChange={(density) => updateUiDensity(density)}
         onExport={handleExport}
         onImport={handleImport}
         onProviderChange={(update) => updateProvider(update)}
+        onProviderKeysChange={(update) => updateProviderKeys(update)}
+        onRefreshBenchmark={() => refreshBenchmark()}
+        onRunBenchmarks={() => runBenchmarks()}
+        onSidecarBaseUrlChange={(baseUrl) => updateSidecarBaseUrl(baseUrl)}
         open={settingsOpen}
         settings={settings}
+      />
+
+      <CitationsDrawer
+        citations={activeRun?.citations ?? []}
+        onClose={() => setCitationsDrawerOpen(false)}
+        open={citationsDrawerOpen}
       />
     </div>
   )
