@@ -27,9 +27,7 @@ Professional local chat app for Qwen with ChatGPT/Claude-style UX, local persist
 - Runtime model used by local server: `models/Qwen3.5-9B-mlx-4bit`
 - Symlink alias created by script: `Qwen3.5-9B -> models/Qwen3.5-9B-mlx-4bit`
 
-## Full Run Process (UI + Model + Agent Runtime)
-
-Run these in separate terminals.
+## Quick Start (One Command)
 
 1. Install dependencies
 
@@ -38,33 +36,44 @@ npm install
 python3 -m pip install mlx-lm
 ```
 
-2. Start local model server (OpenAI-compatible on `127.0.0.1:1234`)
+2. Start model + sidecar + UI together
 
 ```bash
-./scripts/start_qwen_mlx_server.sh
+npm run dev:all
 ```
 
-3. Start sidecar runtime (API on `127.0.0.1:8787`)
-
-```bash
-npm run dev:sidecar
-```
-
-4. Start UI
-
-```bash
-npm run dev -- --host 127.0.0.1 --port 5173
-```
-
-5. Open app
+3. Open app
 
 - `http://127.0.0.1:5173`
 
-6. Settings to verify
+4. Verify settings
 
 - Model Base URL: `http://127.0.0.1:1234/v1`
 - Model Name: `Qwen3.5-9B`
 - Sidecar Base URL: `http://127.0.0.1:8787`
+
+Notes:
+
+- First run can take longer if model download/conversion is needed.
+- `dev:all` auto-restarts sidecar with bounded backoff if it drops.
+- If model or UI exits, `dev:all` stops all services to avoid orphan listeners.
+
+## Manual Fallback Startup (Three Terminals)
+
+```bash
+./scripts/start_qwen_mlx_server.sh
+npm run dev:sidecar
+npm run dev -- --host 127.0.0.1 --port 5173
+```
+
+## Health Checks
+
+```bash
+npm run dev:all:health
+curl http://127.0.0.1:1234/v1/models
+curl http://127.0.0.1:8787/api/health
+curl http://127.0.0.1:5173
+```
 
 ## Scripts
 
@@ -72,6 +81,8 @@ npm run dev -- --host 127.0.0.1 --port 5173
 npm run dev           # frontend
 npm run dev:ui        # frontend (same as dev)
 npm run dev:sidecar   # agent runtime sidecar
+npm run dev:all       # model + sidecar + frontend supervisor
+npm run dev:all:health # quick health probe for ports 1234/8787/5173
 npm run build         # typecheck + frontend build
 npm run typecheck     # TS project references (frontend + sidecar)
 npm run lint          # eslint
@@ -82,7 +93,8 @@ npm run test:e2e      # playwright
 ## Agent Runtime API
 
 - `POST /api/runs`
-- `GET /api/runs/:runId/stream` (SSE)
+- `GET /api/runs/:runId/stream` (SSE with `Last-Event-ID` resume support + keepalive heartbeat)
+- `GET /api/runs/:runId/events?afterId=<n>` (incremental events polling fallback)
 - `POST /api/runs/:runId/cancel`
 - `GET /api/runs/:runId`
 - `GET /api/health`
@@ -103,6 +115,8 @@ Default sidecar base URL: `http://127.0.0.1:8787`
 
 You can use Tavily/Brave keys (optional).
 
+- No API key is required for the local Qwen model endpoint.
+
 - Enter keys in UI Settings (`Agent Runtime` section)
 - Keys are posted to sidecar and stored locally in:
   - `agent-runtime/data/provider-keys.json`
@@ -111,6 +125,21 @@ You can use Tavily/Brave keys (optional).
   - `BRAVE_API_KEY`
 
 Without keys, the runtime uses degraded fallback search behavior.
+
+## Troubleshooting Advanced Modes
+
+If you see runtime stream errors such as `Cannot reach agent runtime ... /stream`:
+
+1. Confirm stack health:
+   - `npm run dev:all:health`
+2. If sidecar is offline, restart the supervised stack:
+   - `npm run dev:all`
+3. Keep mode selected (`Agent`, `Deep Think`, `Deep Research`, `Swarm`) and retry.
+   - The app now attempts reconnect/resume first, then incremental polling fallback before terminal failure.
+4. Check ports are free if startup fails:
+   - `1234` model
+   - `8787` sidecar
+   - `5173` UI
 
 ## Benchmark Gate
 
@@ -168,6 +197,10 @@ interface ExportBundleV1 {
 ```
 
 ## Stop Everything
+
+If running with `npm run dev:all`, press `Ctrl+C` in that terminal.
+
+Manual cleanup:
 
 ```bash
 kill $(lsof -tiTCP:1234 -sTCP:LISTEN) || true
