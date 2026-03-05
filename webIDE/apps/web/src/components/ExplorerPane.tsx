@@ -31,7 +31,43 @@ interface ExplorerPaneProps {
   openTabs: OpenEditorTab[]
   onSelectEditorTab: (path: string) => void
   onBeginResize: (clientX: number) => void
+  onFocusTerminal: () => void
+  onOpenCommandPalette: () => void
+  onOpenProblems: () => void
+  modelServing: boolean
+  runLabel: string
 }
+
+const EXTENSION_MARKETPLACE = [
+  {
+    id: 'ms-python.python',
+    name: 'Python',
+    publisher: 'Microsoft',
+    installs: '123M',
+    description: 'Linting, IntelliSense, testing and notebooks for Python.',
+  },
+  {
+    id: 'esbenp.prettier-vscode',
+    name: 'Prettier',
+    publisher: 'Prettier',
+    installs: '61M',
+    description: 'Opinionated code formatter with low config.',
+  },
+  {
+    id: 'dbaeumer.vscode-eslint',
+    name: 'ESLint',
+    publisher: 'Microsoft',
+    installs: '51M',
+    description: 'Integrates ESLint JavaScript into VS Code.',
+  },
+  {
+    id: 'rust-lang.rust-analyzer',
+    name: 'rust-analyzer',
+    publisher: 'rust-lang',
+    installs: '6M',
+    description: 'Rust language server with diagnostics and code actions.',
+  },
+]
 
 export function ExplorerPane({
   activeView,
@@ -54,12 +90,25 @@ export function ExplorerPane({
   openTabs,
   onSelectEditorTab,
   onBeginResize,
+  onFocusTerminal,
+  onOpenCommandPalette,
+  onOpenProblems,
+  modelServing,
+  runLabel,
 }: ExplorerPaneProps) {
   const [openEditorsVisible, setOpenEditorsVisible] = useState(true)
   const [foldersVisible, setFoldersVisible] = useState(true)
   const [filesVisible, setFilesVisible] = useState(true)
   const [outlineVisible, setOutlineVisible] = useState(true)
   const [timelineVisible, setTimelineVisible] = useState(true)
+
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchInclude, setSearchInclude] = useState('**/*')
+  const [searchExclude, setSearchExclude] = useState('node_modules')
+
+  const [commitMessage, setCommitMessage] = useState('')
+  const [launchProfile, setLaunchProfile] = useState('Node.js: Current File')
+  const [extensionQuery, setExtensionQuery] = useState('')
 
   const expandedSet = useMemo(() => new Set(expandedDirectories), [expandedDirectories])
 
@@ -76,6 +125,32 @@ export function ExplorerPane({
   }, [tree])
 
   const sortedRootNodes = useMemo(() => sortNodes(rootNodes), [rootNodes])
+
+  const searchResults = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase()
+    if (!query) {
+      return []
+    }
+
+    return files.filter((file) => file.toLowerCase().includes(query)).slice(0, 80)
+  }, [files, searchQuery])
+
+  const changedFiles = useMemo(() => openTabs.filter((tab) => tab.dirty), [openTabs])
+
+  const filteredExtensions = useMemo(() => {
+    const query = extensionQuery.trim().toLowerCase()
+    if (!query) {
+      return EXTENSION_MARKETPLACE
+    }
+
+    return EXTENSION_MARKETPLACE.filter((item) => {
+      return (
+        item.name.toLowerCase().includes(query) ||
+        item.publisher.toLowerCase().includes(query) ||
+        item.id.toLowerCase().includes(query)
+      )
+    })
+  }, [extensionQuery])
 
   return (
     <aside className={`explorer-pane ${visible ? 'visible' : 'hidden'}`}>
@@ -228,17 +303,149 @@ export function ExplorerPane({
       ) : null}
 
       {activeView === 'search' ? (
-        <section className="placeholder-pane">
-          <span className="codicon codicon-search" />
-          <p>Search across files (workspace grep) is the next step.</p>
-          <small>Use Ctrl+P for quick file open.</small>
+        <section className="sidebar-view search-view">
+          <div className="sidebar-view-row">
+            <input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search"
+            />
+          </div>
+          <div className="sidebar-view-row">
+            <input
+              value={searchInclude}
+              onChange={(event) => setSearchInclude(event.target.value)}
+              placeholder="files to include"
+            />
+          </div>
+          <div className="sidebar-view-row">
+            <input
+              value={searchExclude}
+              onChange={(event) => setSearchExclude(event.target.value)}
+              placeholder="files to exclude"
+            />
+          </div>
+
+          <div className="search-results">
+            {searchQuery.trim().length === 0 ? <p className="pane-empty">Type to search in workspace files.</p> : null}
+            {searchQuery.trim().length > 0 && searchResults.length === 0 ? <p className="pane-empty">No results found.</p> : null}
+            {searchResults.map((file) => (
+              <button key={file} className="search-result" type="button" onClick={() => onSelectFile(file)}>
+                <span className={`codicon ${iconForFile(file)}`} />
+                <span>{file}</span>
+                <span className="result-meta">1 result</span>
+              </button>
+            ))}
+          </div>
         </section>
       ) : null}
 
-      {activeView === 'outline' ? (
-        <section className="placeholder-pane">
-          <span className="codicon codicon-symbol-namespace" />
-          <p>Outline mode will show file symbols and structure tree.</p>
+      {activeView === 'scm' ? (
+        <section className="sidebar-view scm-view">
+          <div className="scm-header">
+            <span>
+              <span className="codicon codicon-source-control" />
+              <span>Changes</span>
+            </span>
+            <button type="button" onClick={onOpenProblems}>
+              <span className="codicon codicon-warning" />
+            </button>
+          </div>
+
+          <textarea
+            value={commitMessage}
+            onChange={(event) => setCommitMessage(event.target.value)}
+            placeholder="Message (Ctrl+Enter to commit on full SCM integration)"
+          />
+
+          <div className="scm-toolbar">
+            <button disabled={!commitMessage.trim()} type="button">
+              Commit
+            </button>
+            <button type="button">Stage All</button>
+            <button type="button">Discard All</button>
+          </div>
+
+          <div className="scm-list">
+            {changedFiles.length === 0 ? <p className="pane-empty">No pending changes.</p> : null}
+            {changedFiles.map((tab) => (
+              <button key={tab.path} className="scm-item" type="button" onClick={() => onSelectEditorTab(tab.path)}>
+                <span className={`codicon ${iconForFile(tab.path)}`} />
+                <span>{tab.path}</span>
+                <span className="scm-status">M</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {activeView === 'run' ? (
+        <section className="sidebar-view run-view">
+          <div className="run-card">
+            <p>Run and Debug</p>
+            <select value={launchProfile} onChange={(event) => setLaunchProfile(event.target.value)}>
+              <option>Node.js: Current File</option>
+              <option>Python: Current File</option>
+              <option>Go: Launch Package</option>
+              <option>Rust: Debug Binary</option>
+            </select>
+            <div className="run-actions">
+              <button type="button" onClick={onFocusTerminal}>
+                <span className="codicon codicon-debug-start" />
+                <span>Start Debugging</span>
+              </button>
+              <button type="button" onClick={onFocusTerminal}>
+                <span className="codicon codicon-play" />
+                <span>Run Without Debugging</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="run-card">
+            <p>Runtime</p>
+            <span className="run-meta">
+              <span className={`codicon ${modelServing ? 'codicon-pass' : 'codicon-warning'}`} />
+              <span>{modelServing ? 'Local model online' : 'Model not serving'}</span>
+            </span>
+            <span className="run-meta">
+              <span className="codicon codicon-pulse" />
+              <span>{runLabel}</span>
+            </span>
+            <button type="button" onClick={onOpenCommandPalette}>
+              Open Command Palette
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      {activeView === 'extensions' ? (
+        <section className="sidebar-view extensions-view">
+          <div className="sidebar-view-row">
+            <input
+              value={extensionQuery}
+              onChange={(event) => setExtensionQuery(event.target.value)}
+              placeholder="Search Extensions in Marketplace"
+            />
+          </div>
+
+          <div className="extension-list">
+            {filteredExtensions.map((item) => (
+              <article key={item.id} className="extension-card">
+                <div className="extension-head">
+                  <span className="codicon codicon-extensions" />
+                  <div>
+                    <p>{item.name}</p>
+                    <small>{item.publisher}</small>
+                  </div>
+                </div>
+                <p className="extension-desc">{item.description}</p>
+                <div className="extension-meta">
+                  <span>{item.installs} installs</span>
+                  <button type="button">Install</button>
+                </div>
+              </article>
+            ))}
+          </div>
         </section>
       ) : null}
 
@@ -354,7 +561,15 @@ function labelForView(view: ViewId): string {
     return 'Search'
   }
 
-  return 'Outline'
+  if (view === 'scm') {
+    return 'Source Control'
+  }
+
+  if (view === 'run') {
+    return 'Run and Debug'
+  }
+
+  return 'Extensions'
 }
 
 function iconForFile(filePath: string): string {
