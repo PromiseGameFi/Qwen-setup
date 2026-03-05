@@ -72,6 +72,8 @@ How it works:
 - The app injects this brain as a system prompt on each chat run.
 - On the first assistant turn in a thread, it applies welcome rules from the JSON.
 - It includes variation hints and a per-thread random seed so welcomes are not identical every time.
+- Optional hard access gate uses `accessGate` from JSON + `VITE_DEMO_SECRET_CODE` from `.env`.
+  - If gate is enabled and code is set, chat stays locked until correct code is entered.
 
 ## Quick Start (One Command)
 
@@ -105,12 +107,13 @@ Notes:
 - `dev:all` auto-restarts sidecar with bounded backoff if it drops.
 - If model or UI exits, `dev:all` stops all services to avoid orphan listeners.
 
-## Switch Local <-> Hugging Face
+## Switch Local <-> Remote
 
 Use Settings -> **Model Provider** quick actions:
 
 - **Use Local Runtime** (original local flow)
 - **Use HF Space** (remote Hugging Face endpoint)
+- **OpenRouter** (no model hosting/build required)
 
 Or switch from terminal:
 
@@ -128,6 +131,32 @@ VITE_MODEL_NAME=Qwen3.5-0.8B-Q4_K_M.gguf
 VITE_MODEL_API_KEY=
 MODEL_BASE_URL=https://<your-space>.hf.space/v1
 ```
+
+## No-Build Alternative: OpenRouter
+
+If Hugging Face Space builds keep failing, use OpenRouter directly (no Docker build step).
+
+1. Set `.env`:
+
+```bash
+VITE_PROVIDER_PRESET=openrouter
+VITE_MODEL_BASE_URL=https://openrouter.ai/api/v1
+VITE_MODEL_NAME=openrouter/auto
+VITE_MODEL_API_KEY=sk-or-...
+MODEL_BASE_URL=https://openrouter.ai/api/v1
+```
+
+2. Start remote mode:
+
+```bash
+npm run dev:all:hf
+```
+
+3. In app Settings:
+- Preset: `OpenRouter (No Build)` or `Custom`
+- Base URL: `https://openrouter.ai/api/v1`
+- Model: any OpenRouter model id you want
+- API Key: your OpenRouter key
 
 ## Hugging Face Space (Qwen3.5-0.8B)
 
