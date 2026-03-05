@@ -12,7 +12,7 @@ import {
   saveProviderKeys,
   streamRun,
 } from '../lib/api/agentRuntimeClient'
-import { buildMessagesWithAgentBrain } from '../lib/agentBrain'
+import { buildMessagesWithAgentBrain, getAccessGateCode, loadAgentBrain } from '../lib/agentBrain'
 import { streamChatCompletion, type ChatCompletionMessage } from '../lib/api/openaiClient'
 import { buildTitleFromPrompt, isDefaultThreadTitle } from '../lib/chat/title'
 import { createExportBundle, parseExportBundle, serializeExportBundle } from '../lib/exportImport'
@@ -61,6 +61,8 @@ interface ChatState {
   runtimeHealth: RuntimeHealthStatus
   runtimeHealthMessage: string | null
   runtimeReconnectAttempts: number
+  accessGateUnlocked: boolean
+  accessGateWaitingForCode: boolean
   initialize: () => Promise<void>
   createThread: () => Promise<void>
   setActiveThread: (threadId: string) => void
@@ -209,6 +211,29 @@ function isConnectivityBanner(message: string): boolean {
 
 async function persistSettings(settings: AppSettings): Promise<void> {
   await db.settings.put({ key: 'app', value: normalizeSettings(settings) })
+}
+
+const ACCESS_GATE_SESSION_KEY = 'qwen-access-gate-unlocked'
+
+function readAccessGateSession(): boolean {
+  try {
+    return window.sessionStorage.getItem(ACCESS_GATE_SESSION_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function writeAccessGateSession(unlocked: boolean): void {
+  try {
+    if (unlocked) {
+      window.sessionStorage.setItem(ACCESS_GATE_SESSION_KEY, '1')
+      return
+    }
+
+    window.sessionStorage.removeItem(ACCESS_GATE_SESSION_KEY)
+  } catch {
+    // Ignore session storage errors.
+  }
 }
 
 export const useChatStore = create<ChatState>((set, get) => {
@@ -795,6 +820,8 @@ export const useChatStore = create<ChatState>((set, get) => {
     runtimeHealth: 'offline',
     runtimeHealthMessage: null,
     runtimeReconnectAttempts: 0,
+    accessGateUnlocked: false,
+    accessGateWaitingForCode: false,
 
     initialize: async () => {
       if (get().initialized || get().initializing) {
@@ -833,6 +860,7 @@ export const useChatStore = create<ChatState>((set, get) => {
         const runs = await db.runs.toArray()
         const runsById = Object.fromEntries(runs.map((run) => [run.id, run]))
         const timelineEvents = runs.flatMap((run) => run.timeline)
+        const accessGateUnlocked = readAccessGateSession()
 
         set((state) => ({
           ...state,
@@ -846,6 +874,8 @@ export const useChatStore = create<ChatState>((set, get) => {
           runsById,
           timelineByThread: groupTimeline(timelineEvents, runsById),
           banner: null,
+          accessGateUnlocked,
+          accessGateWaitingForCode: false,
         }))
 
         try {
@@ -881,6 +911,8 @@ export const useChatStore = create<ChatState>((set, get) => {
           },
           runtimeHealth: 'offline',
           runtimeHealthMessage: message,
+          accessGateUnlocked: false,
+          accessGateWaitingForCode: false,
         }))
       }
     },
@@ -1216,11 +1248,64 @@ export const useChatStore = create<ChatState>((set, get) => {
         isDefaultThreadTitle(updatedThread.title) &&
         existingMessages.filter((message) => message.role === 'user').length === 0
 
+      const agentBrain = await loadAgentBrain()
+      const configuredGateCode = getAccessGateCode()
+      const gateEnabled = agentBrain.accessGate.enabled && configuredGateCode.length > 0
+
+      if (gateEnabled && !get().accessGateUnlocked) {
+        const waitingForCode = get().accessGateWaitingForCode
+        const normalizeCode = (value: string): string =>
+          agentBrain.accessGate.caseSensitiveCode ? value.trim() : value.trim().toLowerCase()
+
+        const isCorrectCode = normalizeCode(trimmedPrompt) === normalizeCode(configuredGateCode)
+        const gateReply = waitingForCode
+          ? isCorrectCode
+            ? agentBrain.accessGate.successMessage
+            : agentBrain.accessGate.failureMessage
+          : `${agentBrain.accessGate.introMessage} ${agentBrain.accessGate.promptMessage}`
+
+        const gateAssistantMessage: ChatMessage = {
+          ...assistantMessage,
+          content: gateReply,
+          status: 'complete',
+          error: undefined,
+        }
+
+        set((state) => ({
+          ...state,
+          sending: false,
+          streamController: null,
+          accessGateUnlocked: waitingForCode && isCorrectCode,
+          accessGateWaitingForCode: waitingForCode ? !isCorrectCode : true,
+          banner: {
+            type: waitingForCode ? (isCorrectCode ? 'info' : 'error') : 'info',
+            message:
+              waitingForCode && isCorrectCode
+                ? `${agentBrain.accessGate.targetName} access verified. Chat unlocked.`
+                : gateReply,
+          },
+          messagesByThread: replaceMessage(
+            state.messagesByThread,
+            threadId,
+            assistantMessage.id,
+            () => gateAssistantMessage,
+          ),
+        }))
+
+        if (waitingForCode && isCorrectCode) {
+          writeAccessGateSession(true)
+        }
+
+        await db.messages.put(gateAssistantMessage)
+        return
+      }
+
       if (get().activeMode === 'chat') {
         const modelMessages = await buildMessagesWithAgentBrain({
           messages: requestMessages,
           threadId,
           isFirstAssistantTurn,
+          brain: agentBrain,
         })
 
         await streamAssistantDirect({
@@ -1299,6 +1384,19 @@ export const useChatStore = create<ChatState>((set, get) => {
         return
       }
 
+      const agentBrain = await loadAgentBrain()
+      const gateEnabled = agentBrain.accessGate.enabled && getAccessGateCode().length > 0
+      if (gateEnabled && !get().accessGateUnlocked) {
+        set((state) => ({
+          ...state,
+          banner: {
+            type: 'error',
+            message: 'Chat is locked. Enter the secret code to continue.',
+          },
+        }))
+        return
+      }
+
       const messages = get().messagesByThread[threadId] ?? []
       if (messages.length === 0) {
         return
@@ -1365,6 +1463,7 @@ export const useChatStore = create<ChatState>((set, get) => {
           messages: requestMessages,
           threadId,
           isFirstAssistantTurn,
+          brain: agentBrain,
         })
 
         await streamAssistantDirect({
