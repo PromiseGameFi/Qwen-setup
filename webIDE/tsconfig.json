@@ -1,0 +1,9 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/protocol" },
+    { "path": "packages/knowledge-pack" },
+    { "path": "services/bridge" },
+    { "path": "apps/web" }
+  ]
+}
