@@ -80,6 +80,8 @@ function validateSettings(settings: unknown): settings is AppSettings {
     (provider.preset === 'lmstudio' ||
       provider.preset === 'ollama' ||
       provider.preset === 'vllm' ||
+      provider.preset === 'hf_space' ||
+      provider.preset === 'openrouter' ||
       provider.preset === 'custom') &&
     typeof provider.baseUrl === 'string' &&
     typeof provider.model === 'string' &&
