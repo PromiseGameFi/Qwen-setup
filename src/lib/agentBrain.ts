@@ -21,6 +21,15 @@ export interface AgentBrainConfig {
     stylePool: string[]
     closingPool: string[]
   }
+  accessGate: {
+    enabled: boolean
+    targetName: string
+    caseSensitiveCode: boolean
+    introMessage: string
+    promptMessage: string
+    successMessage: string
+    failureMessage: string
+  }
 }
 
 export const DEFAULT_AGENT_BRAIN: AgentBrainConfig = {
@@ -58,6 +67,16 @@ export const DEFAULT_AGENT_BRAIN: AgentBrainConfig = {
       'Share your goal and I will break it down.',
       'Tell me the first task and constraints.',
     ],
+  },
+  accessGate: {
+    enabled: false,
+    targetName: 'Oyinoluwa',
+    caseSensitiveCode: false,
+    introMessage:
+      "Hold up, this setup is for Oyinoluwa only. If you're not Oyinoluwa, bounce and touch some grass.",
+    promptMessage: 'If you have the code, input it here.',
+    successMessage: 'Access confirmed. Welcome, Oyinoluwa. You can continue.',
+    failureMessage: 'Wrong code. Chat remains locked.',
   },
 }
 
@@ -107,6 +126,7 @@ function normalizeAgentBrain(raw: unknown): AgentBrainConfig {
   const agent = isRecord(raw.agent) ? raw.agent : {}
   const response = isRecord(raw.response) ? raw.response : {}
   const welcome = isRecord(raw.welcome) ? raw.welcome : {}
+  const accessGate = isRecord(raw.accessGate) ? raw.accessGate : {}
 
   return {
     version: Math.max(1, Math.round(numberOr(raw.version, DEFAULT_AGENT_BRAIN.version))),
@@ -127,6 +147,18 @@ function normalizeAgentBrain(raw: unknown): AgentBrainConfig {
       openerPool: stringArrayOr(welcome.openerPool, DEFAULT_AGENT_BRAIN.welcome.openerPool),
       stylePool: stringArrayOr(welcome.stylePool, DEFAULT_AGENT_BRAIN.welcome.stylePool),
       closingPool: stringArrayOr(welcome.closingPool, DEFAULT_AGENT_BRAIN.welcome.closingPool),
+    },
+    accessGate: {
+      enabled: boolOr(accessGate.enabled, DEFAULT_AGENT_BRAIN.accessGate.enabled),
+      targetName: stringOr(accessGate.targetName, DEFAULT_AGENT_BRAIN.accessGate.targetName),
+      caseSensitiveCode: boolOr(
+        accessGate.caseSensitiveCode,
+        DEFAULT_AGENT_BRAIN.accessGate.caseSensitiveCode,
+      ),
+      introMessage: stringOr(accessGate.introMessage, DEFAULT_AGENT_BRAIN.accessGate.introMessage),
+      promptMessage: stringOr(accessGate.promptMessage, DEFAULT_AGENT_BRAIN.accessGate.promptMessage),
+      successMessage: stringOr(accessGate.successMessage, DEFAULT_AGENT_BRAIN.accessGate.successMessage),
+      failureMessage: stringOr(accessGate.failureMessage, DEFAULT_AGENT_BRAIN.accessGate.failureMessage),
     },
   }
 }
@@ -192,17 +224,27 @@ export async function loadAgentBrain(): Promise<AgentBrainConfig> {
   }
 }
 
+export function getAccessGateCode(): string {
+  if (typeof import.meta.env.VITE_DEMO_SECRET_CODE !== 'string') {
+    return ''
+  }
+
+  return import.meta.env.VITE_DEMO_SECRET_CODE.trim()
+}
+
 export async function buildMessagesWithAgentBrain({
   messages,
   threadId,
   isFirstAssistantTurn,
+  brain,
 }: {
   messages: ChatMessage[]
   threadId: string
   isFirstAssistantTurn: boolean
+  brain?: AgentBrainConfig
 }): Promise<ChatCompletionMessage[]> {
-  const brain = await loadAgentBrain()
-  const systemMessage = buildAgentSystemPrompt(brain, {
+  const resolvedBrain = brain ?? (await loadAgentBrain())
+  const systemMessage = buildAgentSystemPrompt(resolvedBrain, {
     threadId,
     isFirstAssistantTurn,
   })
