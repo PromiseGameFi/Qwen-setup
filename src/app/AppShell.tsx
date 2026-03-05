@@ -22,6 +22,8 @@ export function AppShell() {
     banner,
     benchmarkReport,
     benchmarkLoading,
+    accessGateUnlocked,
+    accessGateWaitingForCode,
     initialize,
     createThread,
     setActiveThread,
@@ -146,7 +148,9 @@ export function AppShell() {
                 {activeThread?.title ?? 'Qwen Workspace'}
               </p>
               <p className="text-xs text-[var(--text-dim)]">
-                Chat - {settings.provider.model} @ {settings.provider.baseUrl}
+                {accessGateWaitingForCode && !accessGateUnlocked
+                  ? 'Access locked - enter secret code to continue'
+                  : `Chat - ${settings.provider.model} @ ${settings.provider.baseUrl}`}
               </p>
             </div>
           </div>
@@ -200,8 +204,13 @@ export function AppShell() {
             />
 
             <Composer
-              canRegenerate={canRegenerate}
+              canRegenerate={canRegenerate && accessGateUnlocked}
               disabled={!initialized}
+              helperText={
+                accessGateWaitingForCode && !accessGateUnlocked
+                  ? 'Access gate active: enter the secret code and press Enter.'
+                  : 'Enter to send - Shift+Enter for newline - Cmd/Ctrl+, settings'
+              }
               onRegenerate={() => {
                 void regenerateLastResponse()
               }}
@@ -209,6 +218,11 @@ export function AppShell() {
                 void sendMessage(prompt)
               }}
               onStop={stopStreaming}
+              placeholder={
+                accessGateWaitingForCode && !accessGateUnlocked
+                  ? 'Enter secret code to unlock chat...'
+                  : 'Message Qwen...'
+              }
               sending={sending}
             />
           </>
