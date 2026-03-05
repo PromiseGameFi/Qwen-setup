@@ -62,8 +62,11 @@ export function SettingsDrawer({
     })
   }
 
-  const handleConnectionProfile = async (target: 'local' | 'hf'): Promise<void> => {
-    const preset: ProviderPreset = target === 'hf' ? 'hf_space' : 'lmstudio'
+  const handleConnectionProfile = async (
+    target: 'local' | 'hf' | 'openrouter',
+  ): Promise<void> => {
+    const preset: ProviderPreset =
+      target === 'hf' ? 'hf_space' : target === 'openrouter' ? 'openrouter' : 'lmstudio'
     const selectedPreset = getProviderPresetDefinition(preset)
 
     await onProviderChange({
@@ -93,7 +96,7 @@ export function SettingsDrawer({
           <div>
             <p className="font-serif text-2xl text-[var(--text-primary)]">Settings</p>
             <p className="mt-1 text-sm text-[var(--text-muted)]">
-              Configure local or Hugging Face model endpoints with sidecar orchestration.
+              Configure local, Hugging Face, or OpenRouter model endpoints.
             </p>
           </div>
           <button
@@ -112,11 +115,11 @@ export function SettingsDrawer({
             <p className="font-medium text-[var(--text-primary)]">Model Provider</p>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             <button
               className={clsx(
                 'rounded-lg border px-3 py-2 text-xs font-medium transition',
-                settings.provider.preset === 'hf_space'
+                settings.provider.preset === 'hf_space' || settings.provider.preset === 'openrouter'
                   ? 'border-[var(--surface-stroke)] bg-[var(--surface-soft)] text-[var(--text-muted)] hover:bg-[var(--surface-soft)]'
                   : 'border-[var(--accent-strong)] bg-[var(--accent-strong)] text-white hover:opacity-90',
               )}
@@ -141,6 +144,21 @@ export function SettingsDrawer({
               type="button"
             >
               Use HF Space
+            </button>
+
+            <button
+              className={clsx(
+                'rounded-lg border px-3 py-2 text-xs font-medium transition',
+                settings.provider.preset === 'openrouter'
+                  ? 'border-[var(--accent-strong)] bg-[var(--accent-strong)] text-white hover:opacity-90'
+                  : 'border-[var(--surface-stroke)] bg-[var(--surface-soft)] text-[var(--text-muted)] hover:bg-[var(--surface-soft)]',
+              )}
+              onClick={() => {
+                void handleConnectionProfile('openrouter')
+              }}
+              type="button"
+            >
+              OpenRouter
             </button>
           </div>
 
@@ -180,6 +198,13 @@ export function SettingsDrawer({
               <code>https://your-space-name.hf.space/v1</code>
             </p>
           ) : null}
+          {settings.provider.preset === 'openrouter' ? (
+            <p className="rounded-lg border border-[var(--surface-stroke)] bg-[var(--surface-soft)] px-3 py-2 text-xs text-[var(--text-muted)]">
+              OpenRouter base URL:
+              {' '}
+              <code>https://openrouter.ai/api/v1</code>
+            </p>
+          ) : null}
 
           <label className="block text-sm text-[var(--text-muted)]">
             Model Name
@@ -191,7 +216,9 @@ export function SettingsDrawer({
               placeholder={
                 settings.provider.preset === 'hf_space'
                   ? 'Qwen3.5-0.8B-Q4_K_M.gguf'
-                  : 'Qwen3.5-9B'
+                  : settings.provider.preset === 'openrouter'
+                    ? 'openrouter/auto'
+                    : 'Qwen3.5-9B'
               }
               value={settings.provider.model}
             />
@@ -204,7 +231,13 @@ export function SettingsDrawer({
               onChange={(event) => {
                 void onProviderChange({ apiKey: event.target.value })
               }}
-              placeholder={settings.provider.preset === 'hf_space' ? 'hf_... (optional)' : 'sk-...'}
+              placeholder={
+                settings.provider.preset === 'hf_space'
+                  ? 'hf_... (optional)'
+                  : settings.provider.preset === 'openrouter'
+                    ? 'sk-or-...'
+                    : 'sk-...'
+              }
               value={settings.provider.apiKey ?? ''}
             />
           </label>
