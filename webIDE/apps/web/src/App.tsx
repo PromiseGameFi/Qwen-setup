@@ -350,11 +350,7 @@ export function App() {
 
       if (event.ctrlKey && event.key === '`') {
         event.preventDefault()
-        setBottomCollapsed(false)
-        setBottomTab('terminal')
-        setTimeout(() => {
-          terminalInputRef.current?.focus()
-        }, 0)
+        focusTerminal()
         return
       }
 
@@ -374,8 +370,36 @@ export function App() {
 
       if (event.altKey && key === '3') {
         event.preventDefault()
-        setActiveView('outline')
+        setActiveView('scm')
         setExplorerVisible(true)
+        return
+      }
+
+      if (event.altKey && key === '4') {
+        event.preventDefault()
+        setActiveView('run')
+        setExplorerVisible(true)
+        return
+      }
+
+      if (event.altKey && key === '5') {
+        event.preventDefault()
+        setActiveView('extensions')
+        setExplorerVisible(true)
+        return
+      }
+
+      if (event.altKey && key === '6') {
+        event.preventDefault()
+        setAssistantVisible((current) => !current)
+        setExplorerVisible(true)
+        return
+      }
+
+      if (primary && key === 'l') {
+        event.preventDefault()
+        setAssistantVisible(true)
+        setAssistantTab('chat')
         return
       }
 
@@ -387,7 +411,7 @@ export function App() {
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [paletteOpen, workspaceId, activeFilePath, command, goal, mode])
+  }, [paletteOpen])
 
   async function bootstrap(): Promise<void> {
     setInitializing(true)
@@ -715,6 +739,8 @@ export function App() {
     setError(null)
     setBottomTab('agent')
     setBottomCollapsed(false)
+    setAssistantVisible(true)
+    setAssistantTab('chat')
     setEvents([])
 
     try {
