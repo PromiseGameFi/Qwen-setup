@@ -2,7 +2,13 @@ export type Role = 'system' | 'user' | 'assistant'
 
 export type MessageStatus = 'streaming' | 'complete' | 'error'
 
-export type ProviderPreset = 'lmstudio' | 'ollama' | 'vllm' | 'hf_space' | 'custom'
+export type ProviderPreset =
+  | 'lmstudio'
+  | 'ollama'
+  | 'vllm'
+  | 'hf_space'
+  | 'openrouter'
+  | 'custom'
 
 export type UiDensity = 'comfortable' | 'compact'
 
@@ -211,6 +217,7 @@ function resolveProviderPreset(value: string | undefined): ProviderPreset {
     value === 'ollama' ||
     value === 'vllm' ||
     value === 'hf_space' ||
+    value === 'openrouter' ||
     value === 'custom'
   ) {
     return value
@@ -231,6 +238,12 @@ const HF_SPACE_MODEL_NAME = envString(
   'Qwen3.5-0.8B-Q4_K_M.gguf',
 )
 const HF_SPACE_API_KEY = envString(import.meta.env.VITE_HF_SPACE_API_KEY, '')
+const OPENROUTER_BASE_URL = envString(
+  import.meta.env.VITE_OPENROUTER_BASE_URL,
+  'https://openrouter.ai/api/v1',
+)
+const OPENROUTER_MODEL_NAME = envString(import.meta.env.VITE_OPENROUTER_MODEL_NAME, 'openrouter/auto')
+const OPENROUTER_API_KEY = envString(import.meta.env.VITE_OPENROUTER_API_KEY, '')
 
 export const PROVIDER_PRESETS: ProviderPresetDefinition[] = [
   {
@@ -256,6 +269,12 @@ export const PROVIDER_PRESETS: ProviderPresetDefinition[] = [
     label: 'Hugging Face Space',
     baseUrl: HF_SPACE_BASE_URL,
     defaultModel: HF_SPACE_MODEL_NAME,
+  },
+  {
+    id: 'openrouter',
+    label: 'OpenRouter (No Build)',
+    baseUrl: OPENROUTER_BASE_URL,
+    defaultModel: OPENROUTER_MODEL_NAME,
   },
 ]
 
@@ -292,7 +311,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
     ),
     apiKey: envString(
       import.meta.env.VITE_MODEL_API_KEY,
-      DEFAULT_PROVIDER_PRESET === 'hf_space' ? HF_SPACE_API_KEY : '',
+      DEFAULT_PROVIDER_PRESET === 'hf_space'
+        ? HF_SPACE_API_KEY
+        : DEFAULT_PROVIDER_PRESET === 'openrouter'
+          ? OPENROUTER_API_KEY
+          : '',
     ),
     model: envString(
       import.meta.env.VITE_MODEL_NAME,
