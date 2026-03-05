@@ -1,5 +1,0 @@
-Write-Host "WebIDE Windows installer stub"
-Write-Host "1) Install Node.js 20+ and npm"
-Write-Host "2) cd into your WebIDE checkout"
-Write-Host "3) Run: npm install"
-Write-Host "4) Run bridge: npm run dev:bridge"

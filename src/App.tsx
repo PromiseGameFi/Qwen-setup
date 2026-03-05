@@ -1,5 +1,5 @@
-import { AppShell } from './app/AppShell'
+import { WebIDEPage } from './app/WebIDEPage'
 
 export default function App() {
-  return <AppShell />
+  return <WebIDEPage />
 }
