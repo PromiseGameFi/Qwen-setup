@@ -5,6 +5,8 @@ import TextareaAutosize from 'react-textarea-autosize'
 interface ComposerProps {
   sending: boolean
   disabled?: boolean
+  placeholder?: string
+  helperText?: string
   onSend: (prompt: string) => void
   onStop: () => void
   onRegenerate: () => void
@@ -14,6 +16,8 @@ interface ComposerProps {
 export function Composer({
   sending,
   disabled,
+  placeholder,
+  helperText,
   onSend,
   onStop,
   onRegenerate,
@@ -46,13 +50,13 @@ export function Composer({
               handleSend()
             }
           }}
-          placeholder="Message Qwen..."
+          placeholder={placeholder ?? 'Message Qwen...'}
           value={draft}
         />
 
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
           <div className="text-xs text-[var(--text-dim)]">
-            Enter to send - Shift+Enter for newline - Cmd/Ctrl+, settings
+            {helperText ?? 'Enter to send - Shift+Enter for newline - Cmd/Ctrl+, settings'}
           </div>
 
           <div className="flex items-center gap-2">
