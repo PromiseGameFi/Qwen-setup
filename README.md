@@ -113,6 +113,7 @@ Use Settings -> **Model Provider** quick actions:
 
 - **Use Local Runtime** (original local flow)
 - **Use HF Space** (remote Hugging Face endpoint)
+- **HF API** (no Space build, uses Hugging Face token)
 - **OpenRouter** (no model hosting/build required)
 
 Or switch from terminal:
@@ -122,7 +123,7 @@ npm run dev:all       # local model + sidecar + UI
 npm run dev:all:hf    # remote model (HF/custom) + sidecar + UI
 ```
 
-When using HF mode, align these `.env` values so frontend and sidecar hit the same endpoint:
+When using HF Space mode, align these `.env` values so frontend and sidecar hit the same endpoint:
 
 ```bash
 VITE_PROVIDER_PRESET=hf_space
@@ -131,6 +132,33 @@ VITE_MODEL_NAME=Qwen3.5-0.8B-Q4_K_M.gguf
 VITE_MODEL_API_KEY=
 MODEL_BASE_URL=https://<your-space>.hf.space/v1
 ```
+
+## No-Build Alternative: Hugging Face Inference API
+
+If Hugging Face Space builds keep failing, use HF Inference API directly with your HF token.
+
+1. Set `.env`:
+
+```bash
+VITE_PROVIDER_PRESET=hf_router
+VITE_MODEL_BASE_URL=https://router.huggingface.co/v1
+VITE_MODEL_NAME=meta-llama/Llama-3.1-8B-Instruct:fastest
+VITE_MODEL_API_KEY=hf_...
+MODEL_BASE_URL=https://router.huggingface.co/v1
+```
+
+2. Start remote mode:
+
+```bash
+npm run dev:all:hf
+```
+
+3. In app Settings:
+- Quick button: `HF API`
+- Preset: `HF Inference API (No Deploy)` or `Custom`
+- Base URL: `https://router.huggingface.co/v1`
+- Model: provider model id, e.g. `meta-llama/Llama-3.1-8B-Instruct:fastest`
+- API Key: your HF token (`hf_...`)
 
 ## No-Build Alternative: OpenRouter
 

@@ -81,6 +81,7 @@ function validateSettings(settings: unknown): settings is AppSettings {
       provider.preset === 'ollama' ||
       provider.preset === 'vllm' ||
       provider.preset === 'hf_space' ||
+      provider.preset === 'hf_router' ||
       provider.preset === 'openrouter' ||
       provider.preset === 'custom') &&
     typeof provider.baseUrl === 'string' &&

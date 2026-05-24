@@ -7,6 +7,7 @@ export type ProviderPreset =
   | 'ollama'
   | 'vllm'
   | 'hf_space'
+  | 'hf_router'
   | 'openrouter'
   | 'custom'
 
@@ -217,6 +218,7 @@ function resolveProviderPreset(value: string | undefined): ProviderPreset {
     value === 'ollama' ||
     value === 'vllm' ||
     value === 'hf_space' ||
+    value === 'hf_router' ||
     value === 'openrouter' ||
     value === 'custom'
   ) {
@@ -238,6 +240,15 @@ const HF_SPACE_MODEL_NAME = envString(
   'Qwen3.5-0.8B-Q4_K_M.gguf',
 )
 const HF_SPACE_API_KEY = envString(import.meta.env.VITE_HF_SPACE_API_KEY, '')
+const HF_ROUTER_BASE_URL = envString(
+  import.meta.env.VITE_HF_ROUTER_BASE_URL,
+  'https://router.huggingface.co/v1',
+)
+const HF_ROUTER_MODEL_NAME = envString(
+  import.meta.env.VITE_HF_ROUTER_MODEL_NAME,
+  'meta-llama/Llama-3.1-8B-Instruct:fastest',
+)
+const HF_ROUTER_API_KEY = envString(import.meta.env.VITE_HF_ROUTER_API_KEY, '')
 const OPENROUTER_BASE_URL = envString(
   import.meta.env.VITE_OPENROUTER_BASE_URL,
   'https://openrouter.ai/api/v1',
@@ -269,6 +280,12 @@ export const PROVIDER_PRESETS: ProviderPresetDefinition[] = [
     label: 'Hugging Face Space',
     baseUrl: HF_SPACE_BASE_URL,
     defaultModel: HF_SPACE_MODEL_NAME,
+  },
+  {
+    id: 'hf_router',
+    label: 'HF Inference API (No Deploy)',
+    baseUrl: HF_ROUTER_BASE_URL,
+    defaultModel: HF_ROUTER_MODEL_NAME,
   },
   {
     id: 'openrouter',
@@ -313,6 +330,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
       import.meta.env.VITE_MODEL_API_KEY,
       DEFAULT_PROVIDER_PRESET === 'hf_space'
         ? HF_SPACE_API_KEY
+        : DEFAULT_PROVIDER_PRESET === 'hf_router'
+          ? HF_ROUTER_API_KEY
         : DEFAULT_PROVIDER_PRESET === 'openrouter'
           ? OPENROUTER_API_KEY
           : '',

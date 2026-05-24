@@ -95,6 +95,7 @@ function toProviderPreset(value: unknown): AppSettings['provider']['preset'] {
     value === 'ollama' ||
     value === 'vllm' ||
     value === 'hf_space' ||
+    value === 'hf_router' ||
     value === 'openrouter' ||
     value === 'custom'
   ) {

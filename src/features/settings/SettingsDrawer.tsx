@@ -63,10 +63,16 @@ export function SettingsDrawer({
   }
 
   const handleConnectionProfile = async (
-    target: 'local' | 'hf' | 'openrouter',
+    target: 'local' | 'hf_space' | 'hf_api' | 'openrouter',
   ): Promise<void> => {
     const preset: ProviderPreset =
-      target === 'hf' ? 'hf_space' : target === 'openrouter' ? 'openrouter' : 'lmstudio'
+      target === 'hf_space'
+        ? 'hf_space'
+        : target === 'hf_api'
+          ? 'hf_router'
+          : target === 'openrouter'
+            ? 'openrouter'
+            : 'lmstudio'
     const selectedPreset = getProviderPresetDefinition(preset)
 
     await onProviderChange({
@@ -115,13 +121,15 @@ export function SettingsDrawer({
             <p className="font-medium text-[var(--text-primary)]">Model Provider</p>
           </div>
 
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             <button
               className={clsx(
                 'rounded-lg border px-3 py-2 text-xs font-medium transition',
-                settings.provider.preset === 'hf_space' || settings.provider.preset === 'openrouter'
-                  ? 'border-[var(--surface-stroke)] bg-[var(--surface-soft)] text-[var(--text-muted)] hover:bg-[var(--surface-soft)]'
-                  : 'border-[var(--accent-strong)] bg-[var(--accent-strong)] text-white hover:opacity-90',
+                settings.provider.preset === 'lmstudio' ||
+                  settings.provider.preset === 'ollama' ||
+                  settings.provider.preset === 'vllm'
+                  ? 'border-[var(--accent-strong)] bg-[var(--accent-strong)] text-white hover:opacity-90'
+                  : 'border-[var(--surface-stroke)] bg-[var(--surface-soft)] text-[var(--text-muted)] hover:bg-[var(--surface-soft)]',
               )}
               onClick={() => {
                 void handleConnectionProfile('local')
@@ -139,11 +147,26 @@ export function SettingsDrawer({
                   : 'border-[var(--surface-stroke)] bg-[var(--surface-soft)] text-[var(--text-muted)] hover:bg-[var(--surface-soft)]',
               )}
               onClick={() => {
-                void handleConnectionProfile('hf')
+                void handleConnectionProfile('hf_space')
               }}
               type="button"
             >
               Use HF Space
+            </button>
+
+            <button
+              className={clsx(
+                'rounded-lg border px-3 py-2 text-xs font-medium transition',
+                settings.provider.preset === 'hf_router'
+                  ? 'border-[var(--accent-strong)] bg-[var(--accent-strong)] text-white hover:opacity-90'
+                  : 'border-[var(--surface-stroke)] bg-[var(--surface-soft)] text-[var(--text-muted)] hover:bg-[var(--surface-soft)]',
+              )}
+              onClick={() => {
+                void handleConnectionProfile('hf_api')
+              }}
+              type="button"
+            >
+              HF API
             </button>
 
             <button
@@ -205,6 +228,13 @@ export function SettingsDrawer({
               <code>https://openrouter.ai/api/v1</code>
             </p>
           ) : null}
+          {settings.provider.preset === 'hf_router' ? (
+            <p className="rounded-lg border border-[var(--surface-stroke)] bg-[var(--surface-soft)] px-3 py-2 text-xs text-[var(--text-muted)]">
+              Hugging Face Inference API base URL:
+              {' '}
+              <code>https://router.huggingface.co/v1</code>
+            </p>
+          ) : null}
 
           <label className="block text-sm text-[var(--text-muted)]">
             Model Name
@@ -216,6 +246,8 @@ export function SettingsDrawer({
               placeholder={
                 settings.provider.preset === 'hf_space'
                   ? 'Qwen3.5-0.8B-Q4_K_M.gguf'
+                  : settings.provider.preset === 'hf_router'
+                    ? 'meta-llama/Llama-3.1-8B-Instruct:fastest'
                   : settings.provider.preset === 'openrouter'
                     ? 'openrouter/auto'
                     : 'Qwen3.5-9B'
@@ -234,6 +266,8 @@ export function SettingsDrawer({
               placeholder={
                 settings.provider.preset === 'hf_space'
                   ? 'hf_... (optional)'
+                  : settings.provider.preset === 'hf_router'
+                    ? 'hf_... (required)'
                   : settings.provider.preset === 'openrouter'
                     ? 'sk-or-...'
                     : 'sk-...'
